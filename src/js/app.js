@@ -3287,7 +3287,7 @@ class AlMahaApp {
       <header class="site-header">
         <div class="container navbar">
           <a href="#" class="brand-logo" id="brand-home" aria-label="Al Maha Global Property home">
-            <img src="/assets/icons/icont.png" alt="Al Maha Global Property logo" />
+            <img src="./assets/icons/icont.png" alt="Al Maha Global Property logo" />
             <span class="brand-text">AL MAHA <span>GLOBAL PROPERTY</span></span>
           </a>
           <nav class="nav-links">

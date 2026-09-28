@@ -13,7 +13,7 @@
     linear-gradient(90deg, rgba(6, 13, 18, 0.5) 0%, rgba(10, 24, 35, 0.18) 24%, rgba(15, 28, 38, 0.14) 56%, rgba(31, 61, 71, 0.32) 100%),
     radial-gradient(circle at 22% 28%, rgba(242, 197, 96, 0.38), transparent 18%),
     radial-gradient(circle at 72% 20%, rgba(80, 156, 186, 0.36), transparent 22%),
-    url('/assets/images/back1.jpg') center center / cover no-repeat;
+    url('../assets/images/back1.jpg') center center / cover no-repeat;
   padding: 120px 0 140px;
   color: #FFFFFF;
   text-align: center;
