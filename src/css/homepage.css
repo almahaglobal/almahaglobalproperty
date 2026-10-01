@@ -36,6 +36,19 @@
   animation: heroFrameGlow 5s ease-in-out infinite alternate;
 }
 
+.construction-notice {
+  width: min(1450px, 94vw);
+  margin: 18px auto 12px;
+  padding: 12px 20px;
+  border: 1px solid #17232b;
+  border-radius: 4px;
+  background: #f2c45d;
+  color: #17232b;
+  font-size: 0.95rem;
+  font-weight: 800;
+  text-align: center;
+}
+
 .hero-section::before {
   content: "";
   position: absolute;

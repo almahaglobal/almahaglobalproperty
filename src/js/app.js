@@ -3444,6 +3444,7 @@ class AlMahaApp {
     const properties = await ApiService.getProperties();
 
     mainContainer.innerHTML = `
+      <div class="construction-notice" role="status">UNDER CONSTRUCTION</div>
       <section class="hero-section">
         <div class="container">
           <h1 class="hero-title">${t.heroTitle}</h1>
