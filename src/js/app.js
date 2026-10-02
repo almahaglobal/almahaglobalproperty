@@ -1937,7 +1937,7 @@ class AlMahaApp {
     });
   }
 
-  renderLoginPage() {
+  renderLoginPage(adminMode = false) {
     const mainContainer = document.getElementById('main-content');
     if (!mainContainer) return;
 
@@ -1948,19 +1948,19 @@ class AlMahaApp {
         <div class="auth-shell login-shell">
           <div class="auth-intro">
             <span class="auth-eyebrow">AL MAHA GLOBAL PROPERTY</span>
-            <h1>Welcome back</h1>
-            <p>Sign in to manage your property journey.</p>
+            <h1>${adminMode ? 'Administrator sign in' : 'Welcome back'}</h1>
+            <p>${adminMode ? 'Use your administrator email and password to access account and submission reviews.' : 'Sign in to manage your property journey.'}</p>
           </div>
           <form class="auth-form" id="login-form">
-            <div class="auth-section-heading">Log in</div>
+            <div class="auth-section-heading">${adminMode ? 'Admin login' : 'Log in'}</div>
             <div class="login-fields">
               <label>Email address (username)<input name="email" type="email" autocomplete="username" required></label>
               <label>Password<input name="password" type="password" autocomplete="current-password" required></label>
             </div>
             <button class="auth-switch" type="button" id="btn-forgot-password">Forgot password?</button>
             <div class="auth-actions">
-              <button class="btn-outline" type="button" id="btn-show-registration">Create account</button>
-              <button class="btn-primary" type="submit">Log in</button>
+              ${adminMode ? '<button class="btn-outline" type="button" id="btn-admin-login-back">Back to site</button>' : '<button class="btn-outline" type="button" id="btn-show-registration">Create account</button>'}
+              <button class="btn-primary" type="submit">${adminMode ? 'Sign in as admin' : 'Log in'}</button>
             </div>
             <p class="auth-status" id="login-status" role="status"></p>
           </form>
@@ -1969,6 +1969,7 @@ class AlMahaApp {
     `;
 
     document.getElementById('btn-show-registration')?.addEventListener('click', () => this.renderAuthPage());
+    document.getElementById('btn-admin-login-back')?.addEventListener('click', () => this.renderHomepage());
     document.getElementById('btn-forgot-password')?.addEventListener('click', () => {
       const email = document.querySelector('#login-form [name="email"]').value.trim();
       this.renderForgotPasswordPage(email);
@@ -1994,8 +1995,13 @@ class AlMahaApp {
 
       const activeUser = await this.refreshUserProfile(data.user);
       const adminRoles = ['admin', 'platform_owner', 'company_owner', 'company_admin', 'staff'];
-      if (activeUser && adminRoles.includes(activeUser.role) && activeUser.verificationStatus === 'approved') {
+      const isApprovedAdmin = activeUser && adminRoles.includes(activeUser.role) && activeUser.verificationStatus === 'approved';
+      if (isApprovedAdmin) {
         this.renderAdminVerificationPage();
+      } else if (adminMode) {
+        status.textContent = activeUser
+          ? 'This account does not have approved administrator access.'
+          : 'Could not verify administrator access. Try again or contact the site administrator.';
       } else {
         this.initHeader();
         this.renderHomepage();
@@ -3447,6 +3453,7 @@ class AlMahaApp {
             </div>
           </div>
           <div class="nav-actions">
+            <button class="btn-outline btn-admin-login" id="btn-admin-login" type="button">Admin login</button>
             <button class="btn-outline btn-sign-in" id="btn-sign-in" type="button">${loggedInLabel}</button>
             ${accountStatusLabel ? `<span class="account-status-label ${state.user.verificationStatus === 'approved' ? 'is-approved' : ''}" role="status">${accountStatusLabel}</span>` : ''}
             ${state.user ? '<button class="btn-outline btn-logout" id="btn-logout" type="button" title="Log out" aria-label="Log out"><span aria-hidden="true">&#x21AA;</span></button>' : ''}
@@ -3460,6 +3467,7 @@ class AlMahaApp {
     const languageSelect = document.getElementById('header-language');
     const currencySelect = document.getElementById('header-currency');
     const signInButton = document.getElementById('btn-sign-in');
+    const adminLoginButton = document.getElementById('btn-admin-login');
     const logoutButton = document.getElementById('btn-logout');
     const adminDashboardButton = document.getElementById('btn-admin-dashboard');
     const sellButton = document.getElementById('btn-sell');
@@ -3513,6 +3521,7 @@ class AlMahaApp {
         this.renderLoginPage();
       }
     });
+    adminLoginButton?.addEventListener('click', () => this.renderLoginPage(true));
     logoutButton?.addEventListener('click', async () => {
       logoutButton.disabled = true;
       const { error } = await supabase.auth.signOut();
