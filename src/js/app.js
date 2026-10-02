@@ -81,13 +81,13 @@ class AlMahaApp {
     const nextUser = {
       id: user.id,
       email: profileData?.email || user.email,
-      firstName: profileData?.first_name || user.user_metadata?.first_name || user.user_metadata?.full_name?.split(' ')[0] || 'User',
-      lastName: profileData?.last_name || user.user_metadata?.last_name || '',
-      companyName: profileData?.company_name || user.user_metadata?.company_name || '',
-      phone: profileData?.phone || profileData?.mobile_phone || user.user_metadata?.phone || '',
-      whatsapp: profileData?.whatsapp_number || user.user_metadata?.whatsapp_number || '',
-      role: profileData?.role || user.user_metadata?.role || 'buyer',
-      verificationStatus: profileData?.verification_status || user.user_metadata?.verification_status || 'pending_verification'
+      firstName: profileData?.first_name || user.user_metadata?.first_name || user.user_metadata?.full_name?.split(' ')[0] || user.firstName || 'User',
+      lastName: profileData?.last_name || user.user_metadata?.last_name || user.lastName || '',
+      companyName: profileData?.company_name || user.user_metadata?.company_name || user.companyName || '',
+      phone: profileData?.phone || profileData?.mobile_phone || user.user_metadata?.phone || user.phone || '',
+      whatsapp: profileData?.whatsapp_number || user.user_metadata?.whatsapp_number || user.whatsapp || '',
+      role: profileData?.role || user.user_metadata?.role || user.role || 'buyer',
+      verificationStatus: profileData?.verification_status || user.user_metadata?.verification_status || user.verificationStatus || 'pending_verification'
     };
 
     store.setState({ user: nextUser });
@@ -383,11 +383,12 @@ class AlMahaApp {
 
   async renderUserProfilePage() {
     const mainContainer = document.getElementById('main-content');
-    const user = store.getState().user;
-    if (!mainContainer || !user) {
+    const cachedUser = store.getState().user;
+    if (!mainContainer || !cachedUser) {
       this.renderLoginPage();
       return;
     }
+    const user = await this.refreshUserProfile(cachedUser) || cachedUser;
 
      const isSeller = ['owner', 'agent'].includes(user.role);
     const verificationStatus = user.verificationStatus || 'pending_verification';
