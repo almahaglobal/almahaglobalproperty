@@ -5,6 +5,25 @@ import { supabase } from './supabase.js';
 const KYC_QUEUE_DB = 'al-maha-kyc-queue';
 const KYC_QUEUE_STORE = 'documents';
 
+function escapeHtml(value) {
+  return String(value ?? '').replace(/[&<>"']/g, character => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;'
+  })[character]);
+}
+
+function safeHttpUrl(value) {
+  try {
+    const url = new URL(value);
+    return ['http:', 'https:'].includes(url.protocol) ? url.href : '';
+  } catch {
+    return '';
+  }
+}
+
 function openKycQueue() {
   return new Promise((resolve, reject) => {
     const request = indexedDB.open(KYC_QUEUE_DB, 1);
@@ -197,77 +216,174 @@ class AlMahaApp {
     return { error: null, uploadedDocuments };
   }
 
-  async renderAdminVerificationPage() {
+  async renderAdminVerificationPage(initialTab = 'accounts') {
     const mainContainer = document.getElementById('main-content');
     if (!mainContainer) return;
 
-    const [kycResult, propertyVerificationResult] = await Promise.all([
-      supabase
-        .from('kyc_documents')
-        .select('id, user_id, document_type, storage_path, original_filename, status, rejection_reason, users!inner(email, first_name, last_name, role, verification_status)')
-        .in('status', ['pending', 'rejected'])
-        .order('created_at', { ascending: true }),
-      supabase
-        .from('property_verification_documents')
-        .select('id, property_id, document_type, storage_path, original_filename, status, rejection_reason, properties!inner(title, reference_number)')
-        .in('status', ['pending', 'rejected'])
-        .order('created_at', { ascending: true })
-    ]);
-    const { data: documents, error } = kycResult;
-    const propertyDocuments = propertyVerificationResult.data;
-    const propertyVerificationError = propertyVerificationResult.error;
-
-    if (error || propertyVerificationError) {
-      mainContainer.innerHTML = `<section class="property-search-page"><div class="property-search-heading"><h1>Verification review</h1><p>${error?.message || propertyVerificationError.message}</p></div></section>`;
+    const { data: authData, error: authError } = await supabase.auth.getUser();
+    if (authError || !authData.user) {
+      this.renderLoginPage();
       return;
     }
 
-    const documentCards = await Promise.all((documents || []).map(async document => {
-      const signed = await supabase.storage.from('kyc-documents').createSignedUrl(document.storage_path, 600);
-      const user = document.users;
-      const userName = [user.first_name, user.last_name].filter(Boolean).join(' ') || user.email;
-      return `
-        <article class="verification-card" data-user-id="${document.user_id}">
-          <div class="verification-card-heading">
-            <div><strong>${userName}</strong><span>${user.email} · ${user.role}</span></div>
-            <span class="verification-document-status">${document.status}</span>
-          </div>
-          <p>${document.document_type.replace('_', ' ')} · ${document.original_filename}</p>
-          ${signed.data?.signedUrl ? `<a href="${signed.data.signedUrl}" target="_blank" rel="noopener">View document</a>` : '<span>Document preview unavailable</span>'}
-          <div class="verification-actions">
-            <button class="btn-primary" type="button" data-review-decision="approved" data-user-id="${document.user_id}">Approve account</button>
-            <button class="btn-outline" type="button" data-review-decision="rejected" data-user-id="${document.user_id}">Reject account</button>
-          </div>
-        </article>
-      `;
-    }));
-    const propertyDocumentCards = await Promise.all((propertyDocuments || []).map(async document => {
-      const signed = await supabase.storage.from('property-verification-documents').createSignedUrl(document.storage_path, 600);
-      const property = document.properties;
-      return `
-        <article class="verification-card" data-property-document-id="${document.id}">
-          <div class="verification-card-heading">
-            <div><strong>${property.title}</strong><span>${property.reference_number} · ${document.document_type.replace('_', ' ')}</span></div>
-            <span class="verification-document-status">${document.status}</span>
-          </div>
-          <p>${document.original_filename}</p>
-          ${signed.data?.signedUrl ? `<a href="${signed.data.signedUrl}" target="_blank" rel="noopener">View private document</a>` : '<span>Document preview unavailable</span>'}
-          <div class="verification-actions">
-            <button class="btn-primary" type="button" data-review-decision="approved" data-review-type="property" data-document-id="${document.id}">Approve document</button>
-            <button class="btn-outline" type="button" data-review-decision="rejected" data-review-type="property" data-document-id="${document.id}">Reject document</button>
-          </div>
-        </article>
-      `;
-    }));
+    const adminUser = await this.refreshUserProfile(authData.user);
+    const adminRoles = ['admin', 'platform_owner', 'company_owner', 'company_admin', 'staff'];
+    if (!adminUser || !adminRoles.includes(adminUser.role) || adminUser.verificationStatus !== 'approved') {
+      mainContainer.classList.remove('home-page');
+      mainContainer.innerHTML = '<section class="property-search-page"><div class="property-search-heading"><span class="auth-eyebrow">ADMIN</span><h1>Admin access required</h1><p>Sign in with an approved administrator account to review submissions.</p></div></section>';
+      return;
+    }
 
+    this.adminActiveTab = ['accounts', 'properties', 'projects'].includes(initialTab) ? initialTab : 'accounts';
     document.body.classList.remove('home-page');
     mainContainer.classList.remove('home-page');
+    mainContainer.innerHTML = '<section class="admin-dashboard"><header class="admin-dashboard-heading"><span class="auth-eyebrow">AL MAHA GLOBAL PROPERTY</span><h1>Admin dashboard</h1><p>Review new accounts, property evidence, listings, and project submissions.</p></header><p class="admin-action-status" id="admin-action-status" role="status"></p><div class="admin-dashboard-loading">Loading review queues...</div></section>';
+
+    const [accountsResult, propertiesResult, projectsResult] = await Promise.all([
+      supabase
+        .from('users')
+        .select('id, email, first_name, last_name, role, verification_status, created_at')
+        .in('role', ['owner', 'agent'])
+        .in('verification_status', ['pending_verification', 'rejected'])
+        .order('created_at', { ascending: true }),
+      supabase
+        .from('properties')
+        .select('id, reference_number, title, description, price, currency, purpose, property_type, bedrooms, bathrooms, area_sqft, city, country_code, status, owner_id, created_at')
+        .in('status', ['under_review', 'documents_required'])
+        .order('created_at', { ascending: true }),
+      supabase
+        .from('projects')
+        .select('id, name, slug, description, location, city, starting_price, currency, handover_date, construction_status, construction_progress, payment_plan, hero_image, created_at, developers(name), project_media(storage_path, title, media_type, is_primary)')
+        .eq('approval_status', 'pending_review')
+        .order('created_at', { ascending: true }),
+    ]);
+    const accounts = accountsResult.data || [];
+    const properties = propertiesResult.data || [];
+    const projects = projectsResult.data || [];
+    const accountIds = accounts.map(account => account.id);
+    const propertyIds = properties.map(property => property.id);
+    const ownerIds = [...new Set(properties.map(property => property.owner_id).filter(Boolean))];
+    const [accountDocumentsResult, propertyDocumentsResult, propertyMediaResult, ownersResult] = await Promise.all([
+      accountIds.length
+        ? supabase.from('kyc_documents').select('id, user_id, document_type, storage_path, original_filename, mime_type, status, rejection_reason').in('user_id', accountIds).order('created_at', { ascending: true })
+        : Promise.resolve({ data: [], error: null }),
+      propertyIds.length
+        ? supabase.from('property_verification_documents').select('id, property_id, document_type, storage_path, original_filename, mime_type, status, rejection_reason').in('property_id', propertyIds).order('created_at', { ascending: true })
+        : Promise.resolve({ data: [], error: null }),
+      propertyIds.length
+        ? supabase.from('property_media').select('property_id, url, is_primary').in('property_id', propertyIds)
+        : Promise.resolve({ data: [], error: null }),
+      ownerIds.length
+        ? supabase.from('users').select('id, first_name, last_name, email').in('id', ownerIds)
+        : Promise.resolve({ data: [], error: null })
+    ]);
+    const accountDocuments = accountDocumentsResult.data || [];
+    const propertyDocuments = propertyDocumentsResult.data || [];
+    const propertyMedia = propertyMediaResult.data || [];
+    const owners = new Map((ownersResult.data || []).map(owner => [owner.id, owner]));
+    const accountDocsByUser = new Map();
+    const propertyDocsByProperty = new Map();
+    const propertyMediaByProperty = new Map();
+    for (const document of accountDocuments) {
+      accountDocsByUser.set(document.user_id, [...(accountDocsByUser.get(document.user_id) || []), document]);
+    }
+    for (const document of propertyDocuments) {
+      propertyDocsByProperty.set(document.property_id, [...(propertyDocsByProperty.get(document.property_id) || []), document]);
+    }
+    for (const media of propertyMedia) {
+      propertyMediaByProperty.set(media.property_id, [...(propertyMediaByProperty.get(media.property_id) || []), media]);
+    }
+
+    const uploadMarkup = async (bucket, path, filename, mimeType) => {
+      const { data, error } = await supabase.storage.from(bucket).createSignedUrl(path, 600);
+      if (error || !data?.signedUrl) return `<span class="admin-upload-unavailable">${escapeHtml(filename)} · Preview unavailable</span>`;
+      const signedUrl = escapeHtml(data.signedUrl);
+      const preview = mimeType?.startsWith('image/')
+        ? `<a class="admin-upload-preview" href="${signedUrl}" target="_blank" rel="noopener"><img src="${signedUrl}" alt="${escapeHtml(filename)}" loading="lazy"></a>`
+        : '';
+      return `<div class="admin-upload-row">${preview}<a href="${signedUrl}" target="_blank" rel="noopener">${escapeHtml(filename)} <span>Open file</span></a></div>`;
+    };
+
+    const accountCards = await Promise.all(accounts.map(async account => {
+      const documents = accountDocsByUser.get(account.id) || [];
+      const files = await Promise.all(documents.map(async document => `
+        <div class="admin-document-row">
+          <div><strong>${escapeHtml(document.document_type.replaceAll('_', ' '))}</strong><span class="admin-status">${escapeHtml(document.status)}</span></div>
+          ${await uploadMarkup('kyc-documents', document.storage_path, document.original_filename, document.mime_type)}
+          ${document.rejection_reason ? `<p class="admin-rejection-reason">${escapeHtml(document.rejection_reason)}</p>` : ''}
+        </div>
+      `));
+      const name = [account.first_name, account.last_name].filter(Boolean).join(' ') || account.email;
+      return `<article class="admin-review-card">
+        <div class="admin-review-card-heading"><div><span class="admin-record-type">${escapeHtml(account.role)}</span><h2>${escapeHtml(name)}</h2><p>${escapeHtml(account.email)}</p></div><span class="admin-status ${account.verification_status === 'rejected' ? 'is-rejected' : ''}">${escapeHtml(account.verification_status.replaceAll('_', ' '))}</span></div>
+        <div class="admin-upload-list">${files.join('') || '<p class="admin-empty-inline">No KYC uploads were attached to this account.</p>'}</div>
+        <div class="admin-review-actions"><button class="btn-primary" type="button" data-review-type="account" data-review-decision="approved" data-user-id="${escapeHtml(account.id)}">Approve account</button><button class="btn-outline" type="button" data-review-type="account" data-review-decision="rejected" data-user-id="${escapeHtml(account.id)}">Reject</button></div>
+      </article>`;
+    }));
+
+    const propertyCards = await Promise.all(properties.map(async property => {
+      const owner = owners.get(property.owner_id);
+      const ownerName = owner ? [owner.first_name, owner.last_name].filter(Boolean).join(' ') || owner.email : 'Unknown account';
+      const documents = propertyDocsByProperty.get(property.id) || [];
+      const evidence = await Promise.all(documents.map(async document => `
+        <div class="admin-document-row">
+          <div><strong>${escapeHtml(document.document_type.replaceAll('_', ' '))}</strong><span class="admin-status ${document.status === 'rejected' ? 'is-rejected' : ''}">${escapeHtml(document.status)}</span></div>
+          ${await uploadMarkup('property-verification-documents', document.storage_path, document.original_filename, document.mime_type)}
+          ${document.rejection_reason ? `<p class="admin-rejection-reason">${escapeHtml(document.rejection_reason)}</p>` : ''}
+          ${document.status !== 'approved' ? `<div class="admin-review-actions"><button class="btn-primary" type="button" data-review-type="property" data-review-decision="approved" data-document-id="${escapeHtml(document.id)}">Approve upload</button><button class="btn-outline" type="button" data-review-type="property" data-review-decision="rejected" data-document-id="${escapeHtml(document.id)}">Reject</button></div>` : ''}
+        </div>
+      `));
+      const photos = await Promise.all((propertyMediaByProperty.get(property.id) || []).map(async media => {
+        const { data } = await supabase.storage.from('property-images').createSignedUrl(media.url, 600);
+        return data?.signedUrl ? `<a class="admin-upload-preview" href="${escapeHtml(data.signedUrl)}" target="_blank" rel="noopener"><img src="${escapeHtml(data.signedUrl)}" alt="${escapeHtml(property.title)} property photo" loading="lazy"></a>` : '';
+      }));
+      const price = `${escapeHtml(property.currency || 'AED')} ${Number(property.price || 0).toLocaleString('en-US')}`;
+      const location = [property.city, property.country_code].filter(Boolean).join(', ');
+      return `<article class="admin-review-card">
+        <div class="admin-review-card-heading"><div><span class="admin-record-type">Property listing · ${escapeHtml(property.reference_number)}</span><h2>${escapeHtml(property.title)}</h2><p>Submitted by ${escapeHtml(ownerName)} · ${escapeHtml(property.status.replaceAll('_', ' '))}</p></div><strong class="admin-project-price">${price}</strong></div>
+        <p class="admin-record-description">${escapeHtml(property.description || 'No description provided.')}</p>
+        <div class="admin-record-facts"><span>${escapeHtml(property.property_type || 'Property')}</span><span>${escapeHtml(location || 'Location not provided')}</span><span>${Number(property.bedrooms || 0)} beds</span><span>${Number(property.bathrooms || 0)} baths</span><span>${Number(property.area_sqft || 0).toLocaleString('en-US')} sqft</span></div>
+        <div class="admin-upload-gallery">${photos.join('') || '<span class="admin-empty-inline">No property photos available.</span>'}</div>
+        <div class="admin-upload-list">${evidence.join('') || '<p class="admin-empty-inline">No verification uploads are attached to this listing.</p>'}</div>
+      </article>`;
+    }));
+
+    const projectCards = projects.map(project => {
+      const imageUrl = safeHttpUrl(project.hero_image || project.project_media?.find(media => media.is_primary)?.storage_path);
+      const mediaMarkup = imageUrl
+        ? `<a class="admin-project-image" href="${escapeHtml(imageUrl)}" target="_blank" rel="noopener"><img src="${escapeHtml(imageUrl)}" alt="${escapeHtml(project.name)} project cover" loading="lazy"></a>`
+        : '<div class="admin-project-image admin-project-image-empty">No project image</div>';
+      return `<article class="admin-review-card admin-project-card" data-project-id="${escapeHtml(project.id)}">
+        ${mediaMarkup}<div class="admin-project-details"><div class="admin-review-card-heading"><div><span class="admin-record-type">Off-plan project · ${escapeHtml(project.developers?.name || 'Developer not assigned')}</span><h2>${escapeHtml(project.name)}</h2><p>${escapeHtml([project.location, project.city].filter(Boolean).join(', ') || 'Location not provided')}</p></div><strong class="admin-project-price">${escapeHtml(project.currency || 'AED')} ${Number(project.starting_price || 0).toLocaleString('en-US')}</strong></div>
+        <p class="admin-record-description">${escapeHtml(project.description || 'No description provided.')}</p><div class="admin-record-facts"><span>${escapeHtml(project.construction_status || 'Status not provided')}</span><span>${Number(project.construction_progress || 0)}% complete</span><span>Handover ${escapeHtml(project.handover_date || 'TBD')}</span></div>
+        <div class="admin-review-actions"><button class="btn-primary" type="button" data-review-type="project" data-review-decision="approved" data-project-id="${escapeHtml(project.id)}">Approve project</button><button class="btn-outline" type="button" data-review-type="project" data-review-decision="rejected" data-project-id="${escapeHtml(project.id)}">Reject</button></div></div>
+      </article>`;
+    });
+
+    const queueErrors = [accountsResult.error, propertiesResult.error, projectsResult.error, accountDocumentsResult.error, propertyDocumentsResult.error, propertyMediaResult.error, ownersResult.error].filter(Boolean);
+    const errorMarkup = queueErrors.length ? `<p class="admin-query-error" role="alert">Some queues could not be loaded: ${escapeHtml(queueErrors.map(error => error.message).join(' · '))}</p>` : '';
+    const tabButton = (id, label, count) => `<button class="admin-tab" type="button" role="tab" id="admin-tab-${id}" aria-controls="admin-panel-${id}" aria-selected="${this.adminActiveTab === id}" data-admin-tab="${id}">${label}<span>${count}</span></button>`;
+    const panel = (id, content) => `<section class="admin-panel" id="admin-panel-${id}" role="tabpanel" aria-labelledby="admin-tab-${id}" data-admin-panel="${id}" ${this.adminActiveTab !== id ? 'hidden' : ''}>${content || `<p class="admin-empty-state">No items need review.</p>`}</section>`;
+
     mainContainer.innerHTML = `
-      <section class="property-search-page verification-page">
-        <div class="property-search-heading"><span class="auth-eyebrow">ADMIN</span><h1>Verification review</h1><p>Review identity, deed, and license documents before approving an account.</p></div>
-        <div class="verification-list">${[...documentCards, ...propertyDocumentCards].join('') || '<p>No pending verification documents.</p>'}</div>
+      <section class="admin-dashboard">
+        <header class="admin-dashboard-heading"><span class="auth-eyebrow">AL MAHA GLOBAL PROPERTY</span><h1>Admin dashboard</h1><p>Review new accounts, property records, evidence uploads, and off-plan projects.</p></header>
+        ${errorMarkup}<p class="admin-action-status" id="admin-action-status" role="status"></p>
+        <div class="admin-queue-summary"><span><strong>${accounts.length}</strong> accounts</span><span><strong>${properties.length}</strong> property records</span><span><strong>${projects.length}</strong> projects</span></div>
+        <div class="admin-tabs" role="tablist" aria-label="Review queues">${tabButton('accounts', 'Accounts', accounts.length)}${tabButton('properties', 'Properties & uploads', properties.length)}${tabButton('projects', 'Off-plan projects', projects.length)}</div>
+        ${panel('accounts', accountCards.join(''))}
+        ${panel('properties', propertyCards.join(''))}
+        ${panel('projects', projectCards.join(''))}
       </section>
     `;
+
+    mainContainer.querySelectorAll('[data-admin-tab]').forEach(button => {
+      button.addEventListener('click', () => {
+        this.adminActiveTab = button.dataset.adminTab;
+        mainContainer.querySelectorAll('[data-admin-tab]').forEach(tab => tab.setAttribute('aria-selected', String(tab === button)));
+        mainContainer.querySelectorAll('[data-admin-panel]').forEach(section => { section.hidden = section.dataset.adminPanel !== this.adminActiveTab; });
+      });
+    });
 
     mainContainer.querySelectorAll('[data-review-decision]').forEach(button => {
       button.addEventListener('click', async () => {
@@ -276,25 +392,33 @@ class AlMahaApp {
         if (decision === 'rejected' && !reason) return;
 
         button.disabled = true;
-        const result = button.dataset.reviewType === 'property'
-          ? await supabase.rpc('review_property_verification_document', {
-            target_document_id: button.dataset.documentId,
-            decision,
-            reason
-          })
-          : await supabase.rpc('review_kyc_account', {
-            target_user_id: button.dataset.userId,
-            decision,
-            reason
-          });
+        const result = button.dataset.reviewType === 'project'
+          ? await supabase.from('projects').update({
+            approval_status: decision,
+            is_verified: decision === 'approved',
+            published_at: decision === 'approved' ? new Date().toISOString() : null,
+            updated_at: new Date().toISOString()
+          }).eq('id', button.dataset.projectId).eq('approval_status', 'pending_review').select('id').maybeSingle()
+          : button.dataset.reviewType === 'property'
+            ? await supabase.rpc('review_property_verification_document', {
+              target_document_id: button.dataset.documentId,
+              decision,
+              reason
+            })
+            : await supabase.rpc('review_kyc_account', {
+              target_user_id: button.dataset.userId,
+              decision,
+              reason
+            });
 
-        if (result.error) {
+        if (result.error || (button.dataset.reviewType === 'project' && !result.data)) {
+          const status = document.getElementById('admin-action-status');
+          if (status) status.textContent = result.error?.message || 'This project was already reviewed or is no longer available.';
           button.disabled = false;
-          window.alert(result.error.message);
           return;
         }
 
-        await this.renderAdminVerificationPage();
+        await this.renderAdminVerificationPage(this.adminActiveTab);
       });
     });
   }
@@ -1868,16 +1992,14 @@ class AlMahaApp {
         return;
       }
 
-      store.setState({
-        user: {
-          id: data.user.id,
-          email: data.user.email,
-          firstName: data.user.user_metadata?.full_name?.split(' ')[0] || 'User',
-          role: data.user.user_metadata?.role || 'buyer'
-        }
-      });
-      this.initHeader();
-      this.renderHomepage();
+      const activeUser = await this.refreshUserProfile(data.user);
+      const adminRoles = ['admin', 'platform_owner', 'company_owner', 'company_admin', 'staff'];
+      if (activeUser && adminRoles.includes(activeUser.role) && activeUser.verificationStatus === 'approved') {
+        this.renderAdminVerificationPage();
+      } else {
+        this.initHeader();
+        this.renderHomepage();
+      }
     });
   }
 
@@ -3328,7 +3450,7 @@ class AlMahaApp {
             <button class="btn-outline btn-sign-in" id="btn-sign-in" type="button">${loggedInLabel}</button>
             ${accountStatusLabel ? `<span class="account-status-label ${state.user.verificationStatus === 'approved' ? 'is-approved' : ''}" role="status">${accountStatusLabel}</span>` : ''}
             ${state.user ? '<button class="btn-outline btn-logout" id="btn-logout" type="button" title="Log out" aria-label="Log out"><span aria-hidden="true">&#x21AA;</span></button>' : ''}
-            ${['admin', 'platform_owner', 'company_owner', 'company_admin', 'staff'].includes(state.user?.role) && state.user?.verificationStatus === 'approved' ? '<button class="btn-outline btn-admin-review" id="btn-admin-review" type="button">Review accounts</button>' : ''}
+            ${['admin', 'platform_owner', 'company_owner', 'company_admin', 'staff'].includes(state.user?.role) && state.user?.verificationStatus === 'approved' ? '<button class="btn-outline btn-admin-dashboard" id="btn-admin-dashboard" type="button">Admin dashboard</button>' : ''}
             <button class="btn-primary btn-sell" id="btn-sell" title="${t.sell}" aria-label="${t.sell}"><span class="sell-icon" aria-hidden="true">⌂</span><span>${t.sell}</span></button>
           </div>
         </div>
@@ -3339,7 +3461,7 @@ class AlMahaApp {
     const currencySelect = document.getElementById('header-currency');
     const signInButton = document.getElementById('btn-sign-in');
     const logoutButton = document.getElementById('btn-logout');
-    const adminReviewButton = document.getElementById('btn-admin-review');
+    const adminDashboardButton = document.getElementById('btn-admin-dashboard');
     const sellButton = document.getElementById('btn-sell');
     const homeLinks = [document.getElementById('brand-home'), document.getElementById('nav-home')];
     const buyLink = document.querySelector('[data-route="buy"]');
@@ -3404,7 +3526,7 @@ class AlMahaApp {
       this.initHeader();
       this.renderHomepage();
     });
-    adminReviewButton?.addEventListener('click', () => this.renderAdminVerificationPage());
+    adminDashboardButton?.addEventListener('click', () => this.renderAdminVerificationPage());
     sellButton?.addEventListener('click', () => {
       if (canPostProperty) {
         this.renderSellerListingChoice();
