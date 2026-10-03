@@ -1488,11 +1488,20 @@ class AlMahaApp {
       }
       submitButton.disabled = true;
       status.textContent = 'Submitting project...';
+      const projectId = crypto.randomUUID();
+      let uploadedCoverPath = null;
       try {
         const currencyCode = this.getCountryCurrency(fields.get('country'));
         const startingPrice = Number(fields.get('startingPrice'));
         const downPaymentPercentage = Number(fields.get('downPaymentPercentage'));
+        if (cover?.size) {
+          const safeName = cover.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+          uploadedCoverPath = `${user.id}/${projectId}/${crypto.randomUUID()}-${safeName}`;
+          const upload = await supabase.storage.from('project-media').upload(uploadedCoverPath, cover, { contentType: cover.type, upsert: false });
+          if (upload.error) throw upload.error;
+        }
         const projectResult = await supabase.from('projects').insert({
+          id: projectId,
           name: fields.get('name').trim(), slug: fields.get('slug').trim(), description: fields.get('description').trim(),
           country_code: fields.get('country'), city: fields.get('city').trim(), location: fields.get('location').trim(), starting_price: startingPrice,
           currency: currencyCode, handover_date: fields.get('handoverDate').trim(), construction_status: fields.get('constructionStatus'),
@@ -1500,7 +1509,6 @@ class AlMahaApp {
           created_by: user.id, approval_status: 'pending_review'
         }).select('id, slug').single();
         if (projectResult.error) throw projectResult.error;
-        const projectId = projectResult.data.id;
         const unitResult = await supabase.from('project_unit_types').insert({ project_id: projectId, name: fields.get('unitName').trim(), bedrooms: Number(fields.get('unitBedrooms')), bathrooms: Number(fields.get('unitBathrooms')), min_area_sqft: Number(fields.get('unitArea')) || null, starting_price: Number(fields.get('unitPrice')) || null, available_units: Number(fields.get('availableUnits')) || 0 });
         if (unitResult.error) throw unitResult.error;
         const paymentRows = [{
@@ -1528,11 +1536,7 @@ class AlMahaApp {
           if (amenityResult.error) throw amenityResult.error;
         }
         if (cover?.size) {
-          const safeName = cover.name.replace(/[^a-zA-Z0-9._-]/g, '_');
-          const path = `${user.id}/${projectId}/${crypto.randomUUID()}-${safeName}`;
-          const upload = await supabase.storage.from('project-media').upload(path, cover, { contentType: cover.type, upsert: false });
-          if (upload.error) throw upload.error;
-          const publicUrl = supabase.storage.from('project-media').getPublicUrl(path).data.publicUrl;
+          const publicUrl = supabase.storage.from('project-media').getPublicUrl(uploadedCoverPath).data.publicUrl;
           const mediaResult = await supabase.from('project_media').insert({ project_id: projectId, media_type: 'image', storage_path: publicUrl, is_primary: true });
           if (mediaResult.error) throw mediaResult.error;
           const updateResult = await supabase.from('projects').update({ hero_image: publicUrl }).eq('id', projectId);
@@ -1542,6 +1546,9 @@ class AlMahaApp {
         this.deleteOffPlanDraft(user.id, fields.get('name').trim());
         form.reset();
       } catch (error) {
+        if (uploadedCoverPath) {
+          await supabase.storage.from('project-media').remove([uploadedCoverPath]);
+        }
         status.textContent = error.message || 'Unable to submit the project.';
         submitButton.disabled = false;
       }
@@ -2239,7 +2246,7 @@ class AlMahaApp {
                 <label>Nationality *<input name="nationality" type="text" value="${initialValues.nationality}" required></label>
                 <label>Preferred Language<select name="preferredLanguage"><option value="English" ${initialValues.preferredLanguage === 'English' ? 'selected' : ''}>English</option><option value="Arabic" ${initialValues.preferredLanguage === 'Arabic' ? 'selected' : ''}>Arabic</option><option value="French" ${initialValues.preferredLanguage === 'French' ? 'selected' : ''}>French</option><option value="English (US)" ${initialValues.preferredLanguage === 'English (US)' ? 'selected' : ''}>English (US)</option></select></label>
                 <label>Date of Birth<input name="dateOfBirth" type="date" value="${initialValues.dateOfBirth}"></label>
-                <label class="owner-file-field">Profile Photo<input name="profilePhoto" type="file" accept="image/*"></label>
+                <label class="owner-file-field">Profile Photo<input name="profilePhoto" type="file" accept="image/jpeg,image/png,image/webp"></label>
               </div>
               <div class="owner-checkboxes">
                 <label><input name="terms" type="checkbox" ${initialValues.terms ? 'checked' : ''}> I agree to the Terms & Conditions</label>
@@ -2687,13 +2694,38 @@ class AlMahaApp {
       const submitButton = document.getElementById('owner-submit-btn');
       const statusElement = document.getElementById('owner-form-status');
       const values = getFormSnapshot();
-      const identityFront = form.querySelector('[name="idFront"]')?.files?.[0];
-      const identityBack = form.querySelector('[name="idBack"]')?.files?.[0];
-      const titleDeed = form.querySelector('[name="titleDeed"]')?.files?.[0];
+      const documentSpecs = [
+        ['idFront', 'identity_front'],
+        ['idBack', 'identity_back'],
+        ['passportCopy', 'passport_copy'],
+        ['titleDeed', 'property_deed'],
+        ['additionalOwnershipDoc', 'additional_ownership_document'],
+        ['purchaseAgreement', 'purchase_agreement'],
+        ['powerOfAttorney', 'power_of_attorney']
+      ];
+      const documentEntries = documentSpecs.flatMap(([name, type]) => Array.from(form.querySelector(`[name="${name}"]`)?.files || []).map(file => ({ file, type })));
+      const supportingDocuments = Array.from(form.querySelector('[name="supportingDocuments"]')?.files || []);
+      supportingDocuments.forEach((file, index) => documentEntries.push({ file, type: `supporting_document_${index + 1}` }));
+      const propertyPhotoFiles = Array.from(form.querySelector('[name="propertyPhotos"]')?.files || []);
+      const propertyVideoFile = form.querySelector('[name="propertyVideo"]')?.files?.[0];
+      const profilePhotoFile = form.querySelector('[name="profilePhoto"]')?.files?.[0];
+      const validDocumentTypes = ['application/pdf', 'image/jpeg', 'image/png'];
+      const invalidDocument = documentEntries.find(({ file }) => !validDocumentTypes.includes(file.type) || file.size > 10 * 1024 * 1024);
+      const invalidPhoto = propertyPhotoFiles.find(file => !['image/jpeg', 'image/png', 'image/webp'].includes(file.type) || file.size > 10 * 1024 * 1024);
+      const invalidProfilePhoto = profilePhotoFile && (!['image/jpeg', 'image/png', 'image/webp'].includes(profilePhotoFile.type) || profilePhotoFile.size > 10 * 1024 * 1024);
+      const invalidVideo = propertyVideoFile && (!['video/mp4', 'video/quicktime', 'video/webm'].includes(propertyVideoFile.type) || propertyVideoFile.size > 50 * 1024 * 1024);
+
+      if (invalidDocument || invalidPhoto || invalidProfilePhoto || invalidVideo) {
+        statusElement.textContent = 'Check selected files: documents must be PDF, JPG, or PNG up to 10 MB; images up to 10 MB; videos up to 50 MB.';
+        return;
+      }
 
       submitButton.disabled = true;
-      statusElement.textContent = 'Submitting your registration and property details...';
+      statusElement.textContent = 'Uploading selected files and submitting your registration...';
       statusElement.classList.remove('success');
+      const uploadedPropertyMediaPaths = [];
+      let uploadedProfilePhotoPath = null;
+      let profilePhotoUrl = null;
 
       try {
         let currentUser = store.getState().user;
@@ -2722,6 +2754,9 @@ class AlMahaApp {
           });
 
           if (error) throw error;
+          if (!data.session) {
+            throw new Error('Account created. Verify your email, sign in, then restart this submission and attach the files again.');
+          }
           currentUser = data?.user ? {
             id: data.user.id,
             email: data.user.email,
@@ -2751,15 +2786,42 @@ class AlMahaApp {
         if (!activeUser?.id) {
           throw new Error('Unable to create a linked account. Please sign in and try again.');
         }
-
-        const documentEntries = [];
-        if (identityFront) documentEntries.push({ file: identityFront, type: 'identity_front' });
-        if (identityBack) documentEntries.push({ file: identityBack, type: 'identity_back' });
-        if (titleDeed) documentEntries.push({ file: titleDeed, type: 'title_deed' });
+        const { data: authData } = await supabase.auth.getSession();
+        if (authData.session?.user.id !== activeUser.id) {
+          throw new Error('Sign in with the account for this submission before uploading its files.');
+        }
 
         if (documentEntries.length > 0) {
           const docResult = await this.uploadKycDocuments({ id: activeUser.id, email: activeUser.email || email }, documentEntries);
           if (docResult.error) throw new Error(docResult.error.message || 'Document upload failed.');
+        }
+
+        const propertyId = crypto.randomUUID();
+        const propertyMediaRows = [];
+        for (const [index, file] of propertyPhotoFiles.entries()) {
+          const safeFilename = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+          const storagePath = `${activeUser.id}/${propertyId}/${crypto.randomUUID()}-${safeFilename}`;
+          const upload = await supabase.storage.from('property-images').upload(storagePath, file, { contentType: file.type, upsert: false });
+          if (upload.error) throw upload.error;
+          uploadedPropertyMediaPaths.push(storagePath);
+          propertyMediaRows.push({ property_id: propertyId, media_type: 'image', url: storagePath, is_primary: index === 0 });
+        }
+
+        if (propertyVideoFile) {
+          const safeFilename = propertyVideoFile.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+          const storagePath = `${activeUser.id}/${propertyId}/${crypto.randomUUID()}-${safeFilename}`;
+          const upload = await supabase.storage.from('property-images').upload(storagePath, propertyVideoFile, { contentType: propertyVideoFile.type, upsert: false });
+          if (upload.error) throw upload.error;
+          uploadedPropertyMediaPaths.push(storagePath);
+          propertyMediaRows.push({ property_id: propertyId, media_type: 'video', url: storagePath, is_primary: false });
+        }
+
+        if (profilePhotoFile) {
+          const safeFilename = profilePhotoFile.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+          uploadedProfilePhotoPath = `${activeUser.id}/profiles/${crypto.randomUUID()}-${safeFilename}`;
+          const upload = await supabase.storage.from('project-media').upload(uploadedProfilePhotoPath, profilePhotoFile, { contentType: profilePhotoFile.type, upsert: false });
+          if (upload.error) throw upload.error;
+          profilePhotoUrl = supabase.storage.from('project-media').getPublicUrl(uploadedProfilePhotoPath).data.publicUrl;
         }
 
         const slugBase = (values.listingTitle || `${values.propertyType || 'Property'} ${values.city || 'Location'}`)
@@ -2770,6 +2832,7 @@ class AlMahaApp {
 
         const propertyApprovalStatus = activeUser.verificationStatus === 'approved' ? 'approved' : 'pending_verification';
         const propertyPayload = {
+          id: propertyId,
           reference_number: reference,
           title: values.listingTitle || `${values.propertyType || 'Property'} in ${values.city || 'Dubai'}`,
           slug: `${slugBase}-${Date.now()}`,
@@ -2804,23 +2867,12 @@ class AlMahaApp {
 
         if (propertyError) throw propertyError;
 
-        const uploadedPhotoFiles = Array.from(form.querySelector('[name="propertyPhotos"]')?.files || []);
-
-        if (uploadedPhotoFiles.length > 0) {
-          const photoRows = uploadedPhotoFiles.slice(0, 10).map((file, index) => ({
-            property_id: insertedProperty.id,
-            media_type: 'image',
-            url: file.name,
-            is_primary: index === 0
-          }));
-
-          const { error: mediaError } = await supabase.from('property_media').insert(photoRows);
-          if (mediaError) {
-            console.warn('Property photo metadata was not stored:', mediaError.message);
-          }
+        if (propertyMediaRows.length > 0) {
+          const { error: mediaError } = await supabase.from('property_media').insert(propertyMediaRows);
+          if (mediaError) throw mediaError;
         }
 
-        await supabase.from('users').upsert({
+        const profileUpdate = {
           id: activeUser.id,
           email: activeUser.email || email,
           username: (activeUser.email || email || '').trim(),
@@ -2832,7 +2884,10 @@ class AlMahaApp {
           mobile_phone: values.mobile || '',
           role: 'owner',
           verification_status: 'pending_verification'
-        }, { onConflict: 'id' });
+        };
+        if (profilePhotoUrl) profileUpdate.avatar_url = profilePhotoUrl;
+        const { error: profileError } = await supabase.from('users').upsert(profileUpdate, { onConflict: 'id' });
+        if (profileError) throw profileError;
 
         if (!store.getState().user) {
           store.setState({
@@ -2852,6 +2907,12 @@ class AlMahaApp {
         submitButton.textContent = 'Submitted';
         localStorage.removeItem('al_maha_owner_draft');
       } catch (error) {
+        if (uploadedPropertyMediaPaths.length) {
+          await supabase.storage.from('property-images').remove(uploadedPropertyMediaPaths);
+        }
+        if (uploadedProfilePhotoPath) {
+          await supabase.storage.from('project-media').remove([uploadedProfilePhotoPath]);
+        }
         console.error('Owner registration submission failed:', error);
         statusElement.textContent = error?.message || 'Unable to submit your registration right now. Please try again.';
         statusElement.classList.remove('success');
@@ -3098,11 +3159,56 @@ class AlMahaApp {
       const propertyCategory = ['Commercial'].includes(propertyType) ? 'commercial' : propertyType === 'Land' ? 'land' : 'residential';
       const identifier = crypto.randomUUID().replaceAll('-', '').slice(0, 12).toUpperCase();
       const titleSlug = formData.get('title').trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
+      const propertyId = crypto.randomUUID();
 
       submitButton.disabled = true;
       status.textContent = 'Saving your property...';
+      const uploadedVerificationPaths = [];
+      const uploadedStoragePaths = [];
+      const verificationRows = [];
+      const mediaRows = [];
       try {
+        for (const document of verificationFiles) {
+          const safeFilename = document.file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+          const storagePath = `${listingUser.id}/${propertyId}/${document.type}-${crypto.randomUUID()}-${safeFilename}`;
+          const uploadResult = await supabase.storage.from('property-verification-documents').upload(storagePath, document.file, {
+            contentType: document.file.type,
+            upsert: false
+          });
+          if (uploadResult.error) throw uploadResult.error;
+
+          uploadedVerificationPaths.push(storagePath);
+          verificationRows.push({
+            property_id: propertyId,
+            owner_id: listingUser.id,
+            document_type: document.type,
+            submitted_by_role: listingUser.role,
+            storage_path: storagePath,
+            original_filename: document.file.name,
+            mime_type: document.file.type
+          });
+        }
+
+        for (const photo of uploadedPhotos) {
+          const safeFilename = photo.file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+          const storagePath = `${listingUser.id}/${propertyId}/${crypto.randomUUID()}-${safeFilename}`;
+          const uploadResult = await supabase.storage.from('property-images').upload(storagePath, photo.file, {
+            contentType: photo.file.type,
+            upsert: false
+          });
+          if (uploadResult.error) throw uploadResult.error;
+
+          uploadedStoragePaths.push(storagePath);
+          mediaRows.push({
+            property_id: propertyId,
+            media_type: 'image',
+            url: storagePath,
+            is_primary: photo.cover
+          });
+        }
+
         const propertyResult = await supabase.from('properties').insert({
+          id: propertyId,
           owner_id: listingUser.id,
           reference_number: `AMP-${identifier}`,
           slug: `${titleSlug || 'property'}-${identifier.toLowerCase()}`,
@@ -3125,38 +3231,8 @@ class AlMahaApp {
 
         if (propertyResult.error) throw propertyResult.error;
 
-        const uploadedVerificationPaths = [];
-        try {
-          const verificationRows = [];
-          for (const document of verificationFiles) {
-            const safeFilename = document.file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
-            const storagePath = `${listingUser.id}/${propertyResult.data.id}/${document.type}-${crypto.randomUUID()}-${safeFilename}`;
-            const uploadResult = await supabase.storage.from('property-verification-documents').upload(storagePath, document.file, {
-              contentType: document.file.type,
-              upsert: false
-            });
-            if (uploadResult.error) throw uploadResult.error;
-
-            uploadedVerificationPaths.push(storagePath);
-            verificationRows.push({
-              property_id: propertyResult.data.id,
-              owner_id: listingUser.id,
-              document_type: document.type,
-              submitted_by_role: listingUser.role,
-              storage_path: storagePath,
-              original_filename: document.file.name,
-              mime_type: document.file.type
-            });
-          }
-
-          const verificationResult = await supabase.from('property_verification_documents').insert(verificationRows);
-          if (verificationResult.error) throw verificationResult.error;
-        } catch (verificationError) {
-          if (uploadedVerificationPaths.length) {
-            await supabase.storage.from('property-verification-documents').remove(uploadedVerificationPaths);
-          }
-          throw verificationError;
-        }
+        const verificationResult = await supabase.from('property_verification_documents').insert(verificationRows);
+        if (verificationResult.error) throw verificationResult.error;
 
         const selectedAmenities = formData.getAll('amenities');
         const customAmenities = formData.get('customAmenities').split(',').map(value => value.trim()).filter(Boolean);
@@ -3169,35 +3245,8 @@ class AlMahaApp {
           if (amenitiesResult.error) throw amenitiesResult.error;
         }
 
-        const mediaRows = [];
-        const uploadedStoragePaths = [];
-        try {
-          for (const photo of uploadedPhotos) {
-            const safeFilename = photo.file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
-            const storagePath = `${listingUser.id}/${propertyResult.data.id}/${crypto.randomUUID()}-${safeFilename}`;
-            const uploadResult = await supabase.storage.from('property-images').upload(storagePath, photo.file, {
-              contentType: photo.file.type,
-              upsert: false
-            });
-            if (uploadResult.error) throw uploadResult.error;
-
-            uploadedStoragePaths.push(storagePath);
-            mediaRows.push({
-              property_id: propertyResult.data.id,
-              media_type: 'image',
-              url: storagePath,
-              is_primary: photo.cover
-            });
-          }
-
-          const mediaResult = await supabase.from('property_media').insert(mediaRows);
-          if (mediaResult.error) throw mediaResult.error;
-        } catch (uploadError) {
-          if (uploadedStoragePaths.length) {
-            await supabase.storage.from('property-images').remove(uploadedStoragePaths);
-          }
-          throw uploadError;
-        }
+        const mediaResult = await supabase.from('property_media').insert(mediaRows);
+        if (mediaResult.error) throw mediaResult.error;
 
         this.renderPropertySubmissionPage({
           title: formData.get('title'),
@@ -3211,6 +3260,12 @@ class AlMahaApp {
         });
         this.clearFormDraft(sellDraftKey);
       } catch (error) {
+        if (uploadedVerificationPaths.length) {
+          await supabase.storage.from('property-verification-documents').remove(uploadedVerificationPaths);
+        }
+        if (uploadedStoragePaths.length) {
+          await supabase.storage.from('property-images').remove(uploadedStoragePaths);
+        }
         console.error('Property submission failed:', error);
         status.textContent = error.message || 'Unable to save this property. Please try again.';
         submitButton.disabled = false;
