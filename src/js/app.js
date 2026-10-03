@@ -87,7 +87,7 @@ class AlMahaApp {
 
     const profile = await supabase
       .from('users')
-      .select('role, verification_status, first_name, last_name, email, company_name, phone, mobile_phone, whatsapp_number')
+      .select('role, verification_status, first_name, last_name, email, company_name, phone, mobile_phone')
       .eq('id', user.id)
       .maybeSingle();
 
@@ -123,7 +123,7 @@ class AlMahaApp {
       || 'User';
     const profile = await supabase
       .from('users')
-      .select('role, verification_status, first_name, last_name, email, company_name, phone, mobile_phone, whatsapp_number')
+      .select('role, verification_status, first_name, last_name, email, company_name, phone, mobile_phone')
       .eq('id', user.id)
       .maybeSingle();
     const profileRole = profile.data?.role || user.user_metadata?.role || 'buyer';
