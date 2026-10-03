@@ -24,6 +24,13 @@ function safeHttpUrl(value) {
   }
 }
 
+function getAuthRedirectUrl() {
+  const isLocalhost = ['localhost', '127.0.0.1'].includes(window.location.hostname);
+  return isLocalhost
+    ? `${window.location.origin}${window.location.pathname}`
+    : 'https://www.almahaglobalproperty.com/';
+}
+
 function openKycQueue() {
   return new Promise((resolve, reject) => {
     const request = indexedDB.open(KYC_QUEUE_DB, 1);
@@ -1897,7 +1904,7 @@ class AlMahaApp {
         email,
         password: form.elements.password.value,
         options: {
-          emailRedirectTo: `${window.location.origin}${window.location.pathname}`,
+          emailRedirectTo: getAuthRedirectUrl(),
           data: {
             full_name: `${form.elements.firstName.value.trim()} ${form.elements.lastName.value.trim()}`,
             first_name: form.elements.firstName.value.trim(),
@@ -2049,7 +2056,7 @@ class AlMahaApp {
 
       try {
         const { error } = await supabase.auth.resetPasswordForEmail(email, {
-          redirectTo: `${window.location.origin}${window.location.pathname}`
+          redirectTo: getAuthRedirectUrl()
         });
         if (error) {
           status.textContent = error.message.toLowerCase().includes('unable to process request')
@@ -2701,7 +2708,7 @@ class AlMahaApp {
             email,
             password,
             options: {
-              emailRedirectTo: `${window.location.origin}${window.location.pathname}`,
+              emailRedirectTo: getAuthRedirectUrl(),
               data: {
                 full_name: ownerName,
                 first_name: firstName,
