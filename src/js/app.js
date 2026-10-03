@@ -3404,6 +3404,7 @@ class AlMahaApp {
 
     const state = store.getState();
     const t = this.getTranslations(state.language || 'en');
+    const logoUrl = new URL('../../assets/icons/icont.png', import.meta.url).href;
     const loggedInLabel = state.user ? 'Welcome' : t.login;
     const accountStatusLabel = state.user && ['owner', 'agent'].includes(state.user.role)
       ? state.user.verificationStatus === 'approved' ? 'Verified account' : 'Under verification'
@@ -3416,7 +3417,7 @@ class AlMahaApp {
       <header class="site-header">
         <div class="container navbar">
           <a href="#" class="brand-logo" id="brand-home" aria-label="Al Maha Global Property home">
-            <img src="./assets/icons/icont.png" alt="Al Maha Global Property logo" />
+            <img src="${logoUrl}" alt="Al Maha Global Property logo" />
             <span class="brand-text">AL MAHA <span>GLOBAL PROPERTY</span></span>
           </a>
           <nav class="nav-links">
