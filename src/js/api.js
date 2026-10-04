@@ -93,7 +93,7 @@ export const ApiService = {
       let query = supabase
         .from('properties')
         .select('id, reference_number, title, price, currency, purpose, property_type, bedrooms, bathrooms, area_sqft, status, is_verified, description')
-        .eq('status', 'approved')
+        .in('status', ['available', 'approved', 'verified'])
         .order('created_at', { ascending: false });
 
       if (filters.purpose) {
@@ -118,7 +118,7 @@ export const ApiService = {
           location: 'Dubai, United Arab Emirates',
           developer: 'Al Maha Global Property',
           image: 'https://images.unsplash.com/photo-1600585154340-be6161a56a0c?auto=format&fit=crop&w=800&q=80',
-          verified: property.is_verified === true || property.status === 'approved',
+          verified: property.is_verified === true || ['approved', 'verified'].includes(property.status),
           features: property.description ? [property.description.slice(0, 48)] : ['Verified listing']
         }));
       }
