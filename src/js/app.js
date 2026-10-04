@@ -249,14 +249,11 @@ class AlMahaApp {
     const [accountsResult, propertiesResult, projectsResult] = await Promise.all([
       supabase
         .from('users')
-        .select('id, email, first_name, last_name, role, verification_status, created_at')
-        .in('role', ['owner', 'agent'])
-        .in('verification_status', ['pending_verification', 'rejected'])
+        .select('id, email, username, full_name, first_name, last_name, country, phone, mobile_phone, company_name, role, verification_status, is_verified, avatar_url, verified_at, verified_by, created_at, updated_at')
         .order('created_at', { ascending: true }),
       supabase
         .from('properties')
         .select('id, reference_number, title, description, price, currency, purpose, property_type, bedrooms, bathrooms, area_sqft, city, country_code, status, owner_id, created_at')
-        .in('status', ['under_review', 'documents_required'])
         .order('created_at', { ascending: true }),
       supabase
         .from('projects')
@@ -278,7 +275,7 @@ class AlMahaApp {
         ? supabase.from('property_verification_documents').select('id, property_id, document_type, storage_path, original_filename, mime_type, status, rejection_reason').in('property_id', propertyIds).order('created_at', { ascending: true })
         : Promise.resolve({ data: [], error: null }),
       propertyIds.length
-        ? supabase.from('property_media').select('property_id, url, is_primary').in('property_id', propertyIds)
+        ? supabase.from('property_media').select('property_id, url, media_type, is_primary').in('property_id', propertyIds)
         : Promise.resolve({ data: [], error: null }),
       ownerIds.length
         ? supabase.from('users').select('id, first_name, last_name, email').in('id', ownerIds)
@@ -302,13 +299,20 @@ class AlMahaApp {
     }
 
     const uploadMarkup = async (bucket, path, filename, mimeType) => {
-      const { data, error } = await supabase.storage.from(bucket).createSignedUrl(path, 600);
+      const [previewResult, downloadResult] = await Promise.all([
+        supabase.storage.from(bucket).createSignedUrl(path, 600),
+        supabase.storage.from(bucket).createSignedUrl(path, 600, { download: filename })
+      ]);
+      const { data, error } = previewResult;
       if (error || !data?.signedUrl) return `<span class="admin-upload-unavailable">${escapeHtml(filename)} · Preview unavailable</span>`;
       const signedUrl = escapeHtml(data.signedUrl);
       const preview = mimeType?.startsWith('image/')
         ? `<a class="admin-upload-preview" href="${signedUrl}" target="_blank" rel="noopener"><img src="${signedUrl}" alt="${escapeHtml(filename)}" loading="lazy"></a>`
         : '';
-      return `<div class="admin-upload-row">${preview}<a href="${signedUrl}" target="_blank" rel="noopener">${escapeHtml(filename)} <span>Open file</span></a></div>`;
+      const downloadLink = downloadResult.data?.signedUrl
+        ? `<a href="${escapeHtml(downloadResult.data.signedUrl)}">Download</a>`
+        : '';
+      return `<div class="admin-upload-row">${preview}<a href="${signedUrl}" target="_blank" rel="noopener">${escapeHtml(filename)} <span>Open file</span></a>${downloadLink}</div>`;
     };
 
     const accountCards = await Promise.all(accounts.map(async account => {
@@ -318,13 +322,38 @@ class AlMahaApp {
           <div><strong>${escapeHtml(document.document_type.replaceAll('_', ' '))}</strong><span class="admin-status">${escapeHtml(document.status)}</span></div>
           ${await uploadMarkup('kyc-documents', document.storage_path, document.original_filename, document.mime_type)}
           ${document.rejection_reason ? `<p class="admin-rejection-reason">${escapeHtml(document.rejection_reason)}</p>` : ''}
+          ${document.status !== 'approved' ? `<div class="admin-review-actions"><button class="btn-primary" type="button" data-review-type="kyc-document" data-review-decision="approved" data-document-id="${escapeHtml(document.id)}">Approve upload</button><button class="btn-outline" type="button" data-review-type="kyc-document" data-review-decision="rejected" data-document-id="${escapeHtml(document.id)}">Reject upload</button></div>` : ''}
         </div>
       `));
       const name = [account.first_name, account.last_name].filter(Boolean).join(' ') || account.email;
-      return `<article class="admin-review-card">
-        <div class="admin-review-card-heading"><div><span class="admin-record-type">${escapeHtml(account.role)}</span><h2>${escapeHtml(name)}</h2><p>${escapeHtml(account.email)}</p></div><span class="admin-status ${account.verification_status === 'rejected' ? 'is-rejected' : ''}">${escapeHtml(account.verification_status.replaceAll('_', ' '))}</span></div>
+      const profilePhoto = safeHttpUrl(account.avatar_url);
+      const profileFields = [
+        ['Account ID', account.id],
+        ['Username', account.username],
+        ['Full name', account.full_name],
+        ['Country', account.country],
+        ['Phone', account.phone],
+        ['Mobile', account.mobile_phone],
+        ['Company', account.company_name],
+        ['Email verified', account.is_verified ? 'Yes' : 'No'],
+        ['Verified at', account.verified_at ? new Date(account.verified_at).toLocaleString() : 'Not verified'],
+        ['Verified by', account.verified_by],
+        ['Created', account.created_at ? new Date(account.created_at).toLocaleString() : 'Unknown'],
+        ['Updated', account.updated_at ? new Date(account.updated_at).toLocaleString() : 'Unknown']
+      ];
+      const reviewActions = ['owner', 'agent'].includes(account.role) && account.verification_status !== 'approved'
+        ? `<button class="btn-primary" type="button" data-review-type="account" data-review-decision="approved" data-user-id="${escapeHtml(account.id)}">Approve account</button><button class="btn-outline" type="button" data-review-type="account" data-review-decision="rejected" data-user-id="${escapeHtml(account.id)}">Reject</button>`
+        : '';
+      const isAdministrator = ['admin', 'platform_owner', 'company_owner', 'company_admin', 'staff'].includes(account.role);
+      const accountStatusAction = !isAdministrator && account.id !== adminUser.id
+        ? `<button class="btn-outline" type="button" data-admin-account-status="${account.verification_status === 'suspended' ? 'approved' : 'suspended'}" data-user-id="${escapeHtml(account.id)}">${account.verification_status === 'suspended' ? 'Reactivate account' : 'Suspend account'}</button>`
+        : '';
+      const searchText = [account.email, account.username, account.full_name, account.first_name, account.last_name, account.company_name, account.country, account.role, account.verification_status].filter(Boolean).join(' ').toLowerCase();
+      return `<article class="admin-review-card" data-account-search="${escapeHtml(searchText)}">
+        <div class="admin-review-card-heading"><div class="admin-account-heading">${profilePhoto ? `<img class="admin-account-avatar" src="${escapeHtml(profilePhoto)}" alt="${escapeHtml(name)} profile photo" loading="lazy">` : ''}<span class="admin-record-type">${escapeHtml(account.role)}</span><h2>${escapeHtml(name)}</h2><p>${escapeHtml(account.email)}</p></div><span class="admin-status ${account.verification_status === 'rejected' ? 'is-rejected' : ''}">${escapeHtml(account.verification_status.replaceAll('_', ' '))}</span></div>
+        <dl class="admin-account-details">${profileFields.map(([label, value]) => `<div><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value || 'Not provided')}</dd></div>`).join('')}</dl>
         <div class="admin-upload-list">${files.join('') || '<p class="admin-empty-inline">No KYC uploads were attached to this account.</p>'}</div>
-        <div class="admin-review-actions"><button class="btn-primary" type="button" data-review-type="account" data-review-decision="approved" data-user-id="${escapeHtml(account.id)}">Approve account</button><button class="btn-outline" type="button" data-review-type="account" data-review-decision="rejected" data-user-id="${escapeHtml(account.id)}">Reject</button></div>
+        <div class="admin-review-actions"><button class="btn-outline" type="button" data-admin-reset-email="${escapeHtml(account.email)}">Send password reset</button>${reviewActions}${accountStatusAction}</div>
       </article>`;
     }));
 
@@ -340,10 +369,12 @@ class AlMahaApp {
           ${document.status !== 'approved' ? `<div class="admin-review-actions"><button class="btn-primary" type="button" data-review-type="property" data-review-decision="approved" data-document-id="${escapeHtml(document.id)}">Approve upload</button><button class="btn-outline" type="button" data-review-type="property" data-review-decision="rejected" data-document-id="${escapeHtml(document.id)}">Reject</button></div>` : ''}
         </div>
       `));
-      const photos = await Promise.all((propertyMediaByProperty.get(property.id) || []).map(async media => {
-        const { data } = await supabase.storage.from('property-images').createSignedUrl(media.url, 600);
-        return data?.signedUrl ? `<a class="admin-upload-preview" href="${escapeHtml(data.signedUrl)}" target="_blank" rel="noopener"><img src="${escapeHtml(data.signedUrl)}" alt="${escapeHtml(property.title)} property photo" loading="lazy"></a>` : '';
-      }));
+      const photos = await Promise.all((propertyMediaByProperty.get(property.id) || []).map(media => uploadMarkup(
+        'property-images',
+        media.url,
+        media.url.split('/').pop() || property.title,
+        media.media_type === 'video' ? 'video/mp4' : 'image/jpeg'
+      )));
       const price = `${escapeHtml(property.currency || 'AED')} ${Number(property.price || 0).toLocaleString('en-US')}`;
       const location = [property.city, property.country_code].filter(Boolean).join(', ');
       return `<article class="admin-review-card">
@@ -378,7 +409,7 @@ class AlMahaApp {
         ${errorMarkup}<p class="admin-action-status" id="admin-action-status" role="status"></p>
         <div class="admin-queue-summary"><span><strong>${accounts.length}</strong> accounts</span><span><strong>${properties.length}</strong> property records</span><span><strong>${projects.length}</strong> projects</span></div>
         <div class="admin-tabs" role="tablist" aria-label="Review queues">${tabButton('accounts', 'Accounts', accounts.length)}${tabButton('properties', 'Properties & uploads', properties.length)}${tabButton('projects', 'Off-plan projects', projects.length)}</div>
-        ${panel('accounts', accountCards.join(''))}
+        ${panel('accounts', `<label class="admin-account-filter">Find account<input id="admin-account-filter" type="search" placeholder="Name, email, company, role"></label>${accountCards.join('')}`)}
         ${panel('properties', propertyCards.join(''))}
         ${panel('projects', projectCards.join(''))}
       </section>
@@ -389,6 +420,51 @@ class AlMahaApp {
         this.adminActiveTab = button.dataset.adminTab;
         mainContainer.querySelectorAll('[data-admin-tab]').forEach(tab => tab.setAttribute('aria-selected', String(tab === button)));
         mainContainer.querySelectorAll('[data-admin-panel]').forEach(section => { section.hidden = section.dataset.adminPanel !== this.adminActiveTab; });
+      });
+    });
+
+    mainContainer.querySelector('#admin-account-filter')?.addEventListener('input', event => {
+      const searchTerm = event.currentTarget.value.trim().toLowerCase();
+      mainContainer.querySelectorAll('[data-account-search]').forEach(card => {
+        card.hidden = !card.dataset.accountSearch.includes(searchTerm);
+      });
+    });
+
+    mainContainer.querySelectorAll('[data-admin-reset-email]').forEach(button => {
+      button.addEventListener('click', async () => {
+        const email = button.dataset.adminResetEmail;
+        const status = mainContainer.querySelector('#admin-action-status');
+        button.disabled = true;
+        if (status) status.textContent = `Sending password reset to ${email}...`;
+        try {
+          const { error } = await supabase.auth.resetPasswordForEmail(email, {
+            redirectTo: getAuthRedirectUrl()
+          });
+          if (status) status.textContent = error
+            ? `Could not send the reset email: ${error.message}`
+            : `Password reset email sent to ${email}.`;
+        } catch (error) {
+          if (status) status.textContent = error.message || 'Could not send the password reset email.';
+        } finally {
+          button.disabled = false;
+        }
+      });
+    });
+
+    mainContainer.querySelectorAll('[data-admin-account-status]').forEach(button => {
+      button.addEventListener('click', async () => {
+        const status = mainContainer.querySelector('#admin-action-status');
+        button.disabled = true;
+        if (status) status.textContent = 'Updating account status...';
+        const { error } = await supabase.from('users')
+          .update({ verification_status: button.dataset.adminAccountStatus })
+          .eq('id', button.dataset.userId);
+        if (error) {
+          if (status) status.textContent = `Could not update account status: ${error.message}`;
+          button.disabled = false;
+          return;
+        }
+        await this.renderAdminVerificationPage(this.adminActiveTab);
       });
     });
 
@@ -412,6 +488,12 @@ class AlMahaApp {
               decision,
               reason
             })
+            : button.dataset.reviewType === 'kyc-document'
+              ? await supabase.rpc('review_kyc_document', {
+                document_id: button.dataset.documentId,
+                decision,
+                reason
+              })
             : await supabase.rpc('review_kyc_account', {
               target_user_id: button.dataset.userId,
               decision,
