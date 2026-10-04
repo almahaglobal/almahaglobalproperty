@@ -20,34 +20,42 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 22px;
-  height: 80px;
+  flex-wrap: wrap;
+  gap: 12px;
+  min-height: 80px;
+  padding-top: 10px;
+  padding-bottom: 10px;
 }
 
 .brand-logo {
   display: flex;
   align-items: center;
-  flex-shrink: 0;
+  flex: 1 1 310px;
+  min-width: 0;
   gap: 12px;
   font-weight: 700;
   font-size: 1.25rem;
   letter-spacing: -0.025em;
   color: #f9fbff;
-  white-space: nowrap;
+  white-space: normal;
   text-shadow: 0 0 18px rgba(255, 226, 156, 0.28), 0 0 28px rgba(120, 214, 255, 0.18);
 }
 
 .brand-logo img {
-  width: 42px;
-  height: 42px;
+  flex: 0 0 64px;
+  width: 64px;
+  height: 64px;
   object-fit: contain;
+  object-position: center;
   display: block;
 }
 
 .brand-text {
   display: inline-flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 0.15em;
+  min-width: 0;
 }
 
 .brand-text span {
@@ -65,12 +73,16 @@
 
 .nav-links {
   display: flex;
-  gap: 16px;
+  order: 4;
+  flex: 1 1 100%;
+  flex-wrap: wrap;
+  gap: 8px 18px;
   align-items: center;
-  flex: 1;
   justify-content: center;
   min-width: 0;
-  white-space: nowrap;
+  overflow: visible;
+  white-space: normal;
+  padding: 4px 0;
 }
 
 .nav-links a {
@@ -90,8 +102,11 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  flex-shrink: 0;
-  white-space: nowrap;
+  flex: 0 1 auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  min-width: 0;
+  white-space: normal;
 }
 
 .site-header .btn-sign-in {
@@ -158,6 +173,7 @@
   gap: 8px;
   flex-shrink: 0;
   justify-content: flex-end;
+  margin-left: auto;
 }
 
 .header-select-wrap {
@@ -185,46 +201,26 @@
   white-space: nowrap;
 }
 
-@media (max-width: 1220px) {
-  .navbar {
-    height: auto;
-    min-height: 80px;
-    padding-top: 12px;
-    padding-bottom: 12px;
-    flex-wrap: wrap;
-  }
-
-  .nav-links {
-    order: 4;
-    width: 100%;
-    justify-content: center;
-    gap: 18px;
-    overflow-x: auto;
-    padding: 4px 0;
-  }
-
-  .header-controls {
-    margin-left: 0;
-  }
-}
-
 @media (max-width: 760px) {
   .navbar {
-    align-items: flex-start;
-    gap: 12px;
+    align-items: center;
+    gap: 10px;
   }
 
   .brand-logo,
   .home-page .site-header .brand-logo {
-    font-size: 1.05rem;
+    flex: 1 1 200px;
+    max-width: 100%;
+    min-width: 0;
+    font-size: 1rem;
     gap: 8px;
-    max-width: 48%;
   }
 
   .home-page .site-header .brand-logo img,
   .brand-logo img {
-    width: 42px;
-    height: 42px;
+    flex-basis: 56px;
+    width: 56px;
+    height: 56px;
   }
 
   .brand-text {
@@ -234,7 +230,7 @@
 
   .header-controls {
     gap: 8px;
-    margin-left: auto;
+    margin-left: 0;
   }
 
   .header-select-wrap {
@@ -253,8 +249,8 @@
 
   .nav-actions {
     order: 3;
-    width: 100%;
-    justify-content: flex-end;
+    flex: 1 1 100%;
+    justify-content: flex-start;
     gap: 8px;
   }
 
@@ -265,11 +261,11 @@
   }
 
   .nav-links {
-    order: 4;
     justify-content: flex-start;
-    gap: 20px;
+    gap: 8px 16px;
     min-width: 0;
-    white-space: nowrap;
+    overflow: visible;
+    white-space: normal;
   }
 }
 
