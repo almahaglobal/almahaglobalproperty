@@ -3670,7 +3670,10 @@ class AlMahaApp {
 
     const state = store.getState();
     const t = this.getTranslations(state.language || 'en');
-    const logoUrl = new URL('../../assets/icons/icont.png', import.meta.url).href;
+    const isLocalHost = ['localhost', '127.0.0.1'].includes(window.location.hostname);
+    const logoUrl = isLocalHost
+      ? new URL('../../assets/icons/icont.png', import.meta.url).href
+      : 'https://almahaglobalproperty.com/assets/icons/icont.png';
     const loggedInLabel = state.user ? 'Welcome' : t.login;
     const accountStatusLabel = state.user && ['owner', 'agent'].includes(state.user.role)
       ? state.user.verificationStatus === 'approved' ? 'Verified account' : 'Under verification'
