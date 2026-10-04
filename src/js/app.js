@@ -223,6 +223,61 @@ class AlMahaApp {
     return { error: null, uploadedDocuments };
   }
 
+  renderContactPage() {
+    const mainContainer = document.getElementById('main-content');
+    if (!mainContainer) return;
+
+    document.body.classList.remove('home-page');
+    mainContainer.classList.remove('home-page');
+    mainContainer.innerHTML = `
+      <section class="auth-page login-page">
+        <div class="auth-shell login-shell">
+          <div class="auth-intro">
+            <span class="auth-eyebrow">AL MAHA GLOBAL PROPERTY</span>
+            <h1>Contact us</h1>
+            <p>Send our team a message. We will reply to the email address you provide.</p>
+          </div>
+          <form class="auth-form" id="contact-form">
+            <div class="login-fields">
+              <label>Your name<input name="name" maxlength="120" autocomplete="name" required></label>
+              <label>Email address<input name="email" type="email" maxlength="254" autocomplete="email" required></label>
+              <label>Phone number<input name="phone" type="tel" maxlength="50" autocomplete="tel"></label>
+              <label>Subject<input name="subject" maxlength="180" required></label>
+              <label>Message<textarea name="message" rows="6" minlength="10" maxlength="5000" required></textarea></label>
+            </div>
+            <div class="auth-actions"><button class="btn-primary" type="submit">Send message</button></div>
+            <p class="auth-status" id="contact-status" role="status"></p>
+          </form>
+        </div>
+      </section>
+    `;
+
+    document.getElementById('contact-form')?.addEventListener('submit', async event => {
+      event.preventDefault();
+      const form = event.currentTarget;
+      const status = document.getElementById('contact-status');
+      const submitButton = form.querySelector('button[type="submit"]');
+      submitButton.disabled = true;
+      status.textContent = 'Sending your message...';
+      try {
+        const { error } = await supabase.from('contact_messages').insert({
+          name: form.elements.name.value.trim(),
+          email: form.elements.email.value.trim(),
+          phone: form.elements.phone.value.trim() || null,
+          subject: form.elements.subject.value.trim(),
+          message: form.elements.message.value.trim()
+        });
+        if (error) throw error;
+        form.reset();
+        status.textContent = 'Your message has been sent. Our team will reply by email.';
+      } catch (error) {
+        status.textContent = error.message || 'Unable to send your message. Please try again.';
+      } finally {
+        submitButton.disabled = false;
+      }
+    });
+  }
+
   async renderAdminVerificationPage(initialTab = 'accounts') {
     const mainContainer = document.getElementById('main-content');
     if (!mainContainer) return;
@@ -241,12 +296,12 @@ class AlMahaApp {
       return;
     }
 
-    this.adminActiveTab = ['accounts', 'properties', 'projects'].includes(initialTab) ? initialTab : 'accounts';
+    this.adminActiveTab = ['accounts', 'properties', 'projects', 'messages'].includes(initialTab) ? initialTab : 'accounts';
     document.body.classList.remove('home-page');
     mainContainer.classList.remove('home-page');
     mainContainer.innerHTML = '<section class="admin-dashboard"><header class="admin-dashboard-heading"><span class="auth-eyebrow">AL MAHA GLOBAL PROPERTY</span><h1>Admin dashboard</h1><p>Review new accounts, property evidence, listings, and project submissions.</p></header><p class="admin-action-status" id="admin-action-status" role="status"></p><div class="admin-dashboard-loading">Loading review queues...</div></section>';
 
-    const [accountsResult, propertiesResult, projectsResult] = await Promise.all([
+    const [accountsResult, propertiesResult, projectsResult, contactMessagesResult] = await Promise.all([
       supabase
         .from('users')
         .select('id, email, username, full_name, first_name, last_name, country, phone, mobile_phone, company_name, role, verification_status, is_verified, avatar_url, verified_at, verified_by, created_at, updated_at')
@@ -260,10 +315,16 @@ class AlMahaApp {
         .select('id, name, slug, description, location, city, starting_price, currency, handover_date, construction_status, construction_progress, payment_plan, hero_image, created_at, developers(name), project_media(storage_path, title, media_type, is_primary)')
         .eq('approval_status', 'pending_review')
         .order('created_at', { ascending: true }),
+      supabase
+        .from('contact_messages')
+        .select('id, name, email, phone, subject, message, status, created_at, replied_at')
+        .order('created_at', { ascending: false })
+        .limit(100)
     ]);
     const accounts = accountsResult.data || [];
     const properties = propertiesResult.data || [];
     const projects = projectsResult.data || [];
+    const contactMessages = contactMessagesResult.data || [];
     const accountIds = accounts.map(account => account.id);
     const propertyIds = properties.map(property => property.id);
     const ownerIds = [...new Set(properties.map(property => property.owner_id).filter(Boolean))];
@@ -348,12 +409,18 @@ class AlMahaApp {
       const accountStatusAction = !isAdministrator && account.id !== adminUser.id
         ? `<button class="btn-outline" type="button" data-admin-account-status="${account.verification_status === 'suspended' ? 'approved' : 'suspended'}" data-user-id="${escapeHtml(account.id)}">${account.verification_status === 'suspended' ? 'Reactivate account' : 'Suspend account'}</button>`
         : '';
+      const canDeletePrivilegedAccount = ['platform_owner', 'company_owner', 'admin'].includes(adminUser.role)
+        && (account.role !== 'platform_owner' || adminUser.role === 'platform_owner')
+        && (account.role !== 'company_owner' || ['platform_owner', 'company_owner'].includes(adminUser.role));
+      const deleteAction = account.id !== adminUser.id && (!isAdministrator || canDeletePrivilegedAccount)
+        ? `<button class="btn-outline" type="button" data-admin-delete-user="${escapeHtml(account.id)}" data-account-email="${escapeHtml(account.email)}">Delete account</button>`
+        : '';
       const searchText = [account.email, account.username, account.full_name, account.first_name, account.last_name, account.company_name, account.country, account.role, account.verification_status].filter(Boolean).join(' ').toLowerCase();
       return `<article class="admin-review-card" data-account-search="${escapeHtml(searchText)}">
         <div class="admin-review-card-heading"><div class="admin-account-heading">${profilePhoto ? `<img class="admin-account-avatar" src="${escapeHtml(profilePhoto)}" alt="${escapeHtml(name)} profile photo" loading="lazy">` : ''}<span class="admin-record-type">${escapeHtml(account.role)}</span><h2>${escapeHtml(name)}</h2><p>${escapeHtml(account.email)}</p></div><span class="admin-status ${account.verification_status === 'rejected' ? 'is-rejected' : ''}">${escapeHtml(account.verification_status.replaceAll('_', ' '))}</span></div>
         <dl class="admin-account-details">${profileFields.map(([label, value]) => `<div><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value || 'Not provided')}</dd></div>`).join('')}</dl>
         <div class="admin-upload-list">${files.join('') || '<p class="admin-empty-inline">No KYC uploads were attached to this account.</p>'}</div>
-        <div class="admin-review-actions"><button class="btn-outline" type="button" data-admin-reset-email="${escapeHtml(account.email)}">Send password reset</button>${reviewActions}${accountStatusAction}</div>
+        <div class="admin-review-actions"><button class="btn-outline" type="button" data-admin-reset-email="${escapeHtml(account.email)}">Send password reset</button>${reviewActions}${accountStatusAction}${deleteAction}</div>
       </article>`;
     }));
 
@@ -398,20 +465,32 @@ class AlMahaApp {
       </article>`;
     });
 
-    const queueErrors = [accountsResult.error, propertiesResult.error, projectsResult.error, accountDocumentsResult.error, propertyDocumentsResult.error, propertyMediaResult.error, ownersResult.error].filter(Boolean);
+    const contactMessageCards = contactMessages.map(message => {
+      const replySubject = encodeURIComponent(`Re: ${message.subject}`);
+      const replyBody = encodeURIComponent(`Hello ${message.name},\n\n\nRegards,\nAl Maha Global Property`);
+      const replyUrl = `mailto:${encodeURIComponent(message.email)}?subject=${replySubject}&body=${replyBody}`;
+      return `<article class="admin-review-card">
+        <div class="admin-review-card-heading"><div><span class="admin-record-type">${escapeHtml(message.status)}</span><h2>${escapeHtml(message.subject)}</h2><p>${escapeHtml(message.name)} · <a href="mailto:${escapeHtml(message.email)}">${escapeHtml(message.email)}</a>${message.phone ? ` · ${escapeHtml(message.phone)}` : ''}</p></div><span class="admin-status">${escapeHtml(new Date(message.created_at).toLocaleString())}</span></div>
+        <p class="admin-contact-message">${escapeHtml(message.message)}</p>
+        <div class="admin-review-actions"><a class="btn-primary" href="${escapeHtml(replyUrl)}">Reply by email</a>${message.status === 'new' ? `<button class="btn-outline" type="button" data-contact-action="read" data-contact-id="${escapeHtml(message.id)}">Mark read</button>` : ''}${message.status !== 'replied' ? `<button class="btn-outline" type="button" data-contact-action="replied" data-contact-id="${escapeHtml(message.id)}">Mark replied</button>` : ''}</div>
+      </article>`;
+    });
+
+    const queueErrors = [accountsResult.error, propertiesResult.error, projectsResult.error, contactMessagesResult.error, accountDocumentsResult.error, propertyDocumentsResult.error, propertyMediaResult.error, ownersResult.error].filter(Boolean);
     const errorMarkup = queueErrors.length ? `<p class="admin-query-error" role="alert">Some queues could not be loaded: ${escapeHtml(queueErrors.map(error => error.message).join(' · '))}</p>` : '';
     const tabButton = (id, label, count) => `<button class="admin-tab" type="button" role="tab" id="admin-tab-${id}" aria-controls="admin-panel-${id}" aria-selected="${this.adminActiveTab === id}" data-admin-tab="${id}">${label}<span>${count}</span></button>`;
     const panel = (id, content) => `<section class="admin-panel" id="admin-panel-${id}" role="tabpanel" aria-labelledby="admin-tab-${id}" data-admin-panel="${id}" ${this.adminActiveTab !== id ? 'hidden' : ''}>${content || `<p class="admin-empty-state">No items need review.</p>`}</section>`;
 
     mainContainer.innerHTML = `
       <section class="admin-dashboard">
-        <header class="admin-dashboard-heading"><span class="auth-eyebrow">AL MAHA GLOBAL PROPERTY</span><h1>Admin dashboard</h1><p>Review new accounts, property records, evidence uploads, and off-plan projects.</p></header>
+        <header class="admin-dashboard-heading"><span class="auth-eyebrow">AL MAHA GLOBAL PROPERTY</span><h1>Admin dashboard</h1><p>Review accounts, listings, uploaded evidence, customer messages, and projects.</p></header>
         ${errorMarkup}<p class="admin-action-status" id="admin-action-status" role="status"></p>
-        <div class="admin-queue-summary"><span><strong>${accounts.length}</strong> accounts</span><span><strong>${properties.length}</strong> property records</span><span><strong>${projects.length}</strong> projects</span></div>
-        <div class="admin-tabs" role="tablist" aria-label="Review queues">${tabButton('accounts', 'Accounts', accounts.length)}${tabButton('properties', 'Properties & uploads', properties.length)}${tabButton('projects', 'Off-plan projects', projects.length)}</div>
+        <div class="admin-queue-summary"><span><strong>${accounts.length}</strong> accounts</span><span><strong>${properties.length}</strong> property records</span><span><strong>${projects.length}</strong> projects</span><span><strong>${contactMessages.length}</strong> messages</span></div>
+        <div class="admin-tabs" role="tablist" aria-label="Review queues">${tabButton('accounts', 'Accounts', accounts.length)}${tabButton('properties', 'Properties & uploads', properties.length)}${tabButton('projects', 'Off-plan projects', projects.length)}${tabButton('messages', 'Contact messages', contactMessages.length)}</div>
         ${panel('accounts', `<label class="admin-account-filter">Find account<input id="admin-account-filter" type="search" placeholder="Name, email, company, role"></label>${accountCards.join('')}`)}
         ${panel('properties', propertyCards.join(''))}
         ${panel('projects', projectCards.join(''))}
+        ${panel('messages', contactMessageCards.join(''))}
       </section>
     `;
 
@@ -420,6 +499,28 @@ class AlMahaApp {
         this.adminActiveTab = button.dataset.adminTab;
         mainContainer.querySelectorAll('[data-admin-tab]').forEach(tab => tab.setAttribute('aria-selected', String(tab === button)));
         mainContainer.querySelectorAll('[data-admin-panel]').forEach(section => { section.hidden = section.dataset.adminPanel !== this.adminActiveTab; });
+      });
+    });
+
+    mainContainer.querySelectorAll('[data-contact-action]').forEach(button => {
+      button.addEventListener('click', async () => {
+        const status = button.dataset.contactAction;
+        const update = { status, updated_at: new Date().toISOString() };
+        if (status === 'replied') {
+          update.replied_at = new Date().toISOString();
+          update.replied_by = adminUser.id;
+        }
+        button.disabled = true;
+        const { error } = await supabase.from('contact_messages')
+          .update(update)
+          .eq('id', button.dataset.contactId);
+        if (error) {
+          button.disabled = false;
+          const actionStatus = mainContainer.querySelector('#admin-action-status');
+          if (actionStatus) actionStatus.textContent = error.message;
+          return;
+        }
+        await this.renderAdminVerificationPage(this.adminActiveTab);
       });
     });
 
@@ -465,6 +566,27 @@ class AlMahaApp {
           return;
         }
         await this.renderAdminVerificationPage(this.adminActiveTab);
+      });
+    });
+
+    mainContainer.querySelectorAll('[data-admin-delete-user]').forEach(button => {
+      button.addEventListener('click', async () => {
+        const email = button.dataset.accountEmail;
+        if (!window.confirm(`Permanently delete ${email}? This removes the Auth account, profile, listings, and uploaded files. This cannot be undone.`)) return;
+
+        button.disabled = true;
+        const status = mainContainer.querySelector('#admin-action-status');
+        if (status) status.textContent = `Deleting ${email}...`;
+        try {
+          const { error } = await supabase.functions.invoke('admin-delete-user', {
+            body: { targetUserId: button.dataset.adminDeleteUser }
+          });
+          if (error) throw error;
+          await this.renderAdminVerificationPage(this.adminActiveTab);
+        } catch (error) {
+          button.disabled = false;
+          if (status) status.textContent = error.message || 'Unable to delete the account.';
+        }
       });
     });
 
@@ -3571,6 +3693,7 @@ class AlMahaApp {
             <a href="#" data-route="offplan">${t.offplan}</a>
             <a href="#" data-route="commercial">${t.commercial}</a>
             <a href="#" data-route="agents">Agents</a>
+            <a href="#" data-route="contact">Contact</a>
           </nav>
           <div class="header-controls">
             <div class="header-select-wrap">
@@ -3619,6 +3742,7 @@ class AlMahaApp {
     const homeLinks = [document.getElementById('brand-home'), document.getElementById('nav-home')];
     const buyLink = document.querySelector('[data-route="buy"]');
     const rentLink = document.querySelector('[data-route="rent"]');
+    const contactLink = document.querySelector('[data-route="contact"]');
 
     if (state.user && signInButton) {
       signInButton.textContent = `Welcome, ${state.user.firstName || 'User'}`;
@@ -3649,6 +3773,10 @@ class AlMahaApp {
         return;
       }
       this.renderAgentsPage();
+    });
+    contactLink?.addEventListener('click', (event) => {
+      event.preventDefault();
+      this.renderContactPage();
     });
 
     signInButton?.addEventListener('click', async () => {

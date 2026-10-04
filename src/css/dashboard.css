@@ -462,11 +462,23 @@
   font-size: 0.86rem;
 }
 
+.admin-contact-message {
+  margin: 14px 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .admin-review-actions {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
   margin-top: 14px;
+}
+
+.admin-contact-message {
+  margin: 14px 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .admin-project-card {
