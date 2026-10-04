@@ -317,7 +317,7 @@ class AlMahaApp {
         .order('created_at', { ascending: true }),
       supabase
         .from('contact_messages')
-        .select('id, name, email, phone, subject, message, status, created_at, replied_at')
+        .select('id, name, email, phone, subject, message, status, reply_body, created_at, replied_at')
         .order('created_at', { ascending: false })
         .limit(100)
     ]);
@@ -466,13 +466,10 @@ class AlMahaApp {
     });
 
     const contactMessageCards = contactMessages.map(message => {
-      const replySubject = encodeURIComponent(`Re: ${message.subject}`);
-      const replyBody = encodeURIComponent(`Hello ${message.name},\n\n\nRegards,\nAl Maha Global Property`);
-      const replyUrl = `mailto:${encodeURIComponent(message.email)}?subject=${replySubject}&body=${replyBody}`;
       return `<article class="admin-review-card">
-        <div class="admin-review-card-heading"><div><span class="admin-record-type">${escapeHtml(message.status)}</span><h2>${escapeHtml(message.subject)}</h2><p>${escapeHtml(message.name)} · <a href="mailto:${escapeHtml(message.email)}">${escapeHtml(message.email)}</a>${message.phone ? ` · ${escapeHtml(message.phone)}` : ''}</p></div><span class="admin-status">${escapeHtml(new Date(message.created_at).toLocaleString())}</span></div>
+        <div class="admin-review-card-heading"><div><span class="admin-record-type">${escapeHtml(message.status)}</span><h2>${escapeHtml(message.subject)}</h2><p>${escapeHtml(message.name)} · ${escapeHtml(message.email)}${message.phone ? ` · ${escapeHtml(message.phone)}` : ''}</p></div><span class="admin-status">${escapeHtml(new Date(message.created_at).toLocaleString())}</span></div>
         <p class="admin-contact-message">${escapeHtml(message.message)}</p>
-        <div class="admin-review-actions"><a class="btn-primary" href="${escapeHtml(replyUrl)}">Reply by email</a>${message.status === 'new' ? `<button class="btn-outline" type="button" data-contact-action="read" data-contact-id="${escapeHtml(message.id)}">Mark read</button>` : ''}${message.status !== 'replied' ? `<button class="btn-outline" type="button" data-contact-action="replied" data-contact-id="${escapeHtml(message.id)}">Mark replied</button>` : ''}</div>
+        ${message.status === 'replied' ? `<div class="admin-contact-reply-history"><strong>Reply sent</strong><p>${escapeHtml(message.reply_body || '')}</p><small>${escapeHtml(new Date(message.replied_at).toLocaleString())}</small></div>` : `<form class="admin-contact-reply-form" data-contact-reply data-message-id="${escapeHtml(message.id)}"><label>Reply from almahglobalproperty@gmail.com<textarea name="replyBody" rows="5" maxlength="10000" required placeholder="Write your reply to ${escapeHtml(message.name)}"></textarea></label><div class="admin-review-actions"><button class="btn-primary" type="submit">Send reply</button>${message.status === 'new' ? `<button class="btn-outline" type="button" data-contact-action="read" data-contact-id="${escapeHtml(message.id)}">Mark read</button>` : ''}</div><p class="admin-contact-reply-status" role="status"></p></form>`}
       </article>`;
     });
 
@@ -499,6 +496,42 @@ class AlMahaApp {
         this.adminActiveTab = button.dataset.adminTab;
         mainContainer.querySelectorAll('[data-admin-tab]').forEach(tab => tab.setAttribute('aria-selected', String(tab === button)));
         mainContainer.querySelectorAll('[data-admin-panel]').forEach(section => { section.hidden = section.dataset.adminPanel !== this.adminActiveTab; });
+      });
+    });
+
+    mainContainer.querySelectorAll('[data-contact-reply]').forEach(form => {
+      form.addEventListener('submit', async event => {
+        event.preventDefault();
+        const replyBody = form.elements.replyBody.value.trim();
+        const submitButton = form.querySelector('button[type="submit"]');
+        const status = form.querySelector('.admin-contact-reply-status');
+        if (!replyBody) {
+          status.textContent = 'Write a reply before sending.';
+          return;
+        }
+
+        submitButton.disabled = true;
+        status.textContent = 'Sending reply from almahglobalproperty@gmail.com...';
+        try {
+          const { data, error } = await supabase.functions.invoke('send-contact-reply', {
+            body: { messageId: form.dataset.messageId, replyBody }
+          });
+          if (error) {
+            let errorMessage = error.message;
+            try {
+              const errorBody = await error.context?.clone?.().json();
+              errorMessage = errorBody?.error || errorMessage;
+            } catch {
+              // Keep the Functions client error when the response has no JSON body.
+            }
+            throw new Error(errorMessage);
+          }
+          if (!data?.sent) throw new Error('Gmail did not confirm the reply was sent.');
+          await this.renderAdminVerificationPage(this.adminActiveTab);
+        } catch (error) {
+          status.textContent = error.message || 'Unable to send the reply.';
+          submitButton.disabled = false;
+        }
       });
     });
 

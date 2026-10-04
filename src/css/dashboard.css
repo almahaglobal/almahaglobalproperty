@@ -468,6 +468,55 @@
   overflow-wrap: anywhere;
 }
 
+.admin-contact-reply-form {
+  display: grid;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.admin-contact-reply-form label {
+  display: grid;
+  gap: 6px;
+  color: var(--text-secondary);
+  font-size: 0.82rem;
+  font-weight: 650;
+}
+
+.admin-contact-reply-form textarea {
+  width: 100%;
+  min-height: 112px;
+  padding: 10px;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font: inherit;
+  resize: vertical;
+}
+
+.admin-contact-reply-history {
+  margin-top: 14px;
+  padding: 12px;
+  border-left: 3px solid var(--color-gold);
+  background: var(--bg-primary);
+}
+
+.admin-contact-reply-history p {
+  margin: 6px 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.admin-contact-reply-history small {
+  color: var(--text-secondary);
+}
+
+.admin-contact-reply-status {
+  min-height: 1.4em;
+  color: var(--text-secondary);
+  font-size: 0.82rem;
+}
+
 .admin-review-actions {
   display: flex;
   flex-wrap: wrap;
