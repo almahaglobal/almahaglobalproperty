@@ -301,7 +301,7 @@ class AlMahaApp {
     mainContainer.classList.remove('home-page');
     mainContainer.innerHTML = '<section class="admin-dashboard"><header class="admin-dashboard-heading"><span class="auth-eyebrow">AL MAHA GLOBAL PROPERTY</span><h1>Admin dashboard</h1><p>Review new accounts, property evidence, listings, and project submissions.</p></header><p class="admin-action-status" id="admin-action-status" role="status"></p><div class="admin-dashboard-loading">Loading review queues...</div></section>';
 
-    const [accountsResult, propertiesResult, projectsResult, contactMessagesResult] = await Promise.all([
+    const [accountsResult, propertiesResult, projectsResult, contactMessagesResult, propertyInquiriesResult] = await Promise.all([
       supabase
         .from('users')
         .select('id, email, username, full_name, first_name, last_name, country, phone, mobile_phone, company_name, role, verification_status, is_verified, avatar_url, verified_at, verified_by, created_at, updated_at')
@@ -319,12 +319,20 @@ class AlMahaApp {
         .from('contact_messages')
         .select('id, name, email, phone, subject, message, status, reply_body, created_at, replied_at')
         .order('created_at', { ascending: false })
+        .limit(100),
+      supabase
+        .from('property_inquiries')
+        .select('id, property_id, name, phone, email, message, status, created_at')
+        .not('property_id', 'is', null)
+        .order('created_at', { ascending: false })
         .limit(100)
     ]);
     const accounts = accountsResult.data || [];
     const properties = propertiesResult.data || [];
     const projects = projectsResult.data || [];
     const contactMessages = contactMessagesResult.data || [];
+    const propertyInquiries = propertyInquiriesResult.data || [];
+    const propertiesById = new Map(properties.map(property => [property.id, property]));
     const accountIds = accounts.map(account => account.id);
     const propertyIds = properties.map(property => property.id);
     const ownerIds = [...new Set(properties.map(property => property.owner_id).filter(Boolean))];
@@ -465,6 +473,17 @@ class AlMahaApp {
       </article>`;
     });
 
+    const propertyInquiryCards = propertyInquiries.map(inquiry => {
+      const property = propertiesById.get(inquiry.property_id);
+      const subject = `Property inquiry: ${property?.title || 'Published listing'}`;
+      const replyUrl = `mailto:${encodeURIComponent(inquiry.email)}?subject=${encodeURIComponent(`Re: ${subject}`)}`;
+      return `<article class="admin-review-card">
+        <div class="admin-review-card-heading"><div><span class="admin-record-type">Property inquiry · ${escapeHtml(inquiry.status || 'new')}</span><h2>${escapeHtml(property?.title || 'Property listing')}</h2><p>${property ? `Reference ${escapeHtml(property.reference_number)} · ` : ''}${escapeHtml(inquiry.name)} · ${escapeHtml(inquiry.email)}${inquiry.phone ? ` · ${escapeHtml(inquiry.phone)}` : ''}</p></div><span class="admin-status">${escapeHtml(new Date(inquiry.created_at).toLocaleString())}</span></div>
+        <p class="admin-contact-message">${escapeHtml(inquiry.message || 'The customer requested property information.')}</p>
+        <div class="admin-review-actions"><a class="btn-outline" href="${escapeHtml(replyUrl)}">Reply to customer</a></div>
+      </article>`;
+    });
+
     const contactMessageCards = contactMessages.map(message => {
       return `<article class="admin-review-card">
         <div class="admin-review-card-heading"><div><span class="admin-record-type">${escapeHtml(message.status)}</span><h2>${escapeHtml(message.subject)}</h2><p>${escapeHtml(message.name)} · ${escapeHtml(message.email)}${message.phone ? ` · ${escapeHtml(message.phone)}` : ''}</p></div><span class="admin-status">${escapeHtml(new Date(message.created_at).toLocaleString())}</span></div>
@@ -473,7 +492,7 @@ class AlMahaApp {
       </article>`;
     });
 
-    const queueErrors = [accountsResult.error, propertiesResult.error, projectsResult.error, contactMessagesResult.error, accountDocumentsResult.error, propertyDocumentsResult.error, propertyMediaResult.error, ownersResult.error].filter(Boolean);
+    const queueErrors = [accountsResult.error, propertiesResult.error, projectsResult.error, contactMessagesResult.error, propertyInquiriesResult.error, accountDocumentsResult.error, propertyDocumentsResult.error, propertyMediaResult.error, ownersResult.error].filter(Boolean);
     const errorMarkup = queueErrors.length ? `<p class="admin-query-error" role="alert">Some queues could not be loaded: ${escapeHtml(queueErrors.map(error => error.message).join(' · '))}</p>` : '';
     const tabButton = (id, label, count) => `<button class="admin-tab" type="button" role="tab" id="admin-tab-${id}" aria-controls="admin-panel-${id}" aria-selected="${this.adminActiveTab === id}" data-admin-tab="${id}">${label}<span>${count}</span></button>`;
     const panel = (id, content) => `<section class="admin-panel" id="admin-panel-${id}" role="tabpanel" aria-labelledby="admin-tab-${id}" data-admin-panel="${id}" ${this.adminActiveTab !== id ? 'hidden' : ''}>${content || `<p class="admin-empty-state">No items need review.</p>`}</section>`;
@@ -482,12 +501,12 @@ class AlMahaApp {
       <section class="admin-dashboard">
         <header class="admin-dashboard-heading"><span class="auth-eyebrow">AL MAHA GLOBAL PROPERTY</span><h1>Admin dashboard</h1><p>Review accounts, listings, uploaded evidence, customer messages, and projects.</p></header>
         ${errorMarkup}<p class="admin-action-status" id="admin-action-status" role="status"></p>
-        <div class="admin-queue-summary"><span><strong>${accounts.length}</strong> accounts</span><span><strong>${properties.length}</strong> property records</span><span><strong>${projects.length}</strong> projects</span><span><strong>${contactMessages.length}</strong> messages</span></div>
-        <div class="admin-tabs" role="tablist" aria-label="Review queues">${tabButton('accounts', 'Accounts', accounts.length)}${tabButton('properties', 'Properties & uploads', properties.length)}${tabButton('projects', 'Off-plan projects', projects.length)}${tabButton('messages', 'Contact messages', contactMessages.length)}</div>
+        <div class="admin-queue-summary"><span><strong>${accounts.length}</strong> accounts</span><span><strong>${properties.length}</strong> property records</span><span><strong>${projects.length}</strong> projects</span><span><strong>${contactMessages.length + propertyInquiries.length}</strong> messages and requests</span></div>
+        <div class="admin-tabs" role="tablist" aria-label="Review queues">${tabButton('accounts', 'Accounts', accounts.length)}${tabButton('properties', 'Properties & uploads', properties.length)}${tabButton('projects', 'Off-plan projects', projects.length)}${tabButton('messages', 'Messages & viewing requests', contactMessages.length + propertyInquiries.length)}</div>
         ${panel('accounts', `<label class="admin-account-filter">Find account<input id="admin-account-filter" type="search" placeholder="Name, email, company, role"></label>${accountCards.join('')}`)}
         ${panel('properties', propertyCards.join(''))}
         ${panel('projects', projectCards.join(''))}
-        ${panel('messages', contactMessageCards.join(''))}
+        ${panel('messages', [...propertyInquiryCards, ...contactMessageCards].join(''))}
       </section>
     `;
 
@@ -3596,6 +3615,148 @@ class AlMahaApp {
     document.getElementById('btn-submission-add')?.addEventListener('click', () => this.renderSellPage());
   }
 
+  bindPropertyActions(container, properties) {
+    container.querySelectorAll('[data-property-action]').forEach(button => {
+      button.addEventListener('click', () => {
+        const property = properties.find(item => item.id === button.dataset.propertyId);
+        if (property) this.showPropertyGallery(property, button.dataset.propertyAction);
+      });
+    });
+  }
+
+  showPropertyGallery(property, initialMode = 'gallery') {
+    document.getElementById('property-gallery-modal')?.remove();
+    const media = (property.images || [])
+      .filter(item => ['image', 'video'].includes(item.type) && safeHttpUrl(item.url))
+      .map(item => ({ ...item, url: safeHttpUrl(item.url) }));
+    if (!media.length && safeHttpUrl(property.image)) media.push({ url: safeHttpUrl(property.image), type: 'image', isPrimary: true });
+    let currentIndex = Math.max(0, media.findIndex(item => item.isPrimary));
+    let mode = initialMode;
+    const canRequest = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(property.id || '');
+    const overlay = document.createElement('div');
+    overlay.id = 'property-gallery-modal';
+    overlay.className = 'property-gallery-backdrop';
+    overlay.innerHTML = `
+      <section class="property-gallery-dialog" role="dialog" aria-modal="true" aria-labelledby="property-gallery-title">
+        <button class="property-gallery-close" type="button" aria-label="Close gallery">&#215;</button>
+        <div class="property-gallery-main">
+          <div class="property-gallery-stage"></div>
+          <div class="property-gallery-thumbnails" aria-label="Property photos"></div>
+        </div>
+        <div class="property-gallery-sidebar">
+          <span class="auth-eyebrow">${property.verified ? 'VERIFIED LISTING' : 'PROPERTY LISTING'}</span>
+          <h2 id="property-gallery-title">${escapeHtml(property.title)}</h2>
+          <strong class="property-gallery-price">${escapeHtml(property.currency || 'AED')} ${Number(property.price || 0).toLocaleString('en-US')}</strong>
+          <p>${escapeHtml(property.location || 'United Arab Emirates')}</p>
+          <div class="listing-features"><span>${Number(property.bedrooms || 0)} beds</span><span>${Number(property.bathrooms || 0)} baths</span><span>${Number(property.areaSqft || 0).toLocaleString('en-US')} sqft</span></div>
+          <div class="property-gallery-request"></div>
+        </div>
+      </section>
+    `;
+    document.body.append(overlay);
+
+    const stage = overlay.querySelector('.property-gallery-stage');
+    const thumbnails = overlay.querySelector('.property-gallery-thumbnails');
+    const requestPanel = overlay.querySelector('.property-gallery-request');
+    const renderMedia = () => {
+      const current = media[currentIndex];
+      stage.innerHTML = current
+        ? `${current.type === 'video'
+          ? `<video src="${escapeHtml(current.url)}" controls playsinline preload="metadata"></video>`
+          : `<img src="${escapeHtml(current.url)}" alt="${escapeHtml(property.title)} photo ${currentIndex + 1}" loading="eager">`}
+          ${media.length > 1 ? `<button class="property-gallery-prev" type="button" aria-label="Previous photo">&#x2039;</button><button class="property-gallery-next" type="button" aria-label="Next photo">&#x203A;</button>` : ''}
+          <span class="property-gallery-count">${currentIndex + 1} / ${media.length}</span>`
+        : '<div class="property-gallery-empty">No uploaded photos</div>';
+      thumbnails.innerHTML = media.map((item, index) => `<button type="button" class="property-gallery-thumbnail ${index === currentIndex ? 'is-active' : ''}" data-gallery-index="${index}" aria-label="Show item ${index + 1}">${item.type === 'video' ? '<span>Video</span>' : `<img src="${escapeHtml(item.url)}" alt="" loading="lazy">`}</button>`).join('');
+      stage.querySelector('.property-gallery-prev')?.addEventListener('click', () => {
+        currentIndex = (currentIndex - 1 + media.length) % media.length;
+        renderMedia();
+      });
+      stage.querySelector('.property-gallery-next')?.addEventListener('click', () => {
+        currentIndex = (currentIndex + 1) % media.length;
+        renderMedia();
+      });
+      thumbnails.querySelectorAll('[data-gallery-index]').forEach(button => button.addEventListener('click', () => {
+        currentIndex = Number(button.dataset.galleryIndex);
+        renderMedia();
+      }));
+    };
+
+    const renderRequestPanel = () => {
+      if (mode === 'gallery') {
+        requestPanel.innerHTML = `
+          <h3>Interested in this property?</h3>
+          <div class="property-gallery-actions">
+            <button class="btn-outline" type="button" data-request-type="contact">Contact dealer</button>
+            <button class="btn-primary" type="button" data-request-type="viewing">Book a viewing</button>
+          </div>
+        `;
+        requestPanel.querySelectorAll('[data-request-type]').forEach(button => button.addEventListener('click', () => {
+          mode = button.dataset.requestType;
+          renderRequestPanel();
+        }));
+        return;
+      }
+
+      if (!canRequest) {
+        requestPanel.innerHTML = '<p class="property-gallery-request-status" role="status">Enquiries are available for published listings only.</p><button class="btn-outline" type="button" data-request-back>Back to photos</button>';
+        requestPanel.querySelector('[data-request-back]').addEventListener('click', () => { mode = 'gallery'; renderRequestPanel(); });
+        return;
+      }
+
+      const actionLabel = mode === 'viewing' ? 'Book a viewing' : 'Contact dealer';
+      const defaultMessage = mode === 'viewing' ? 'I would like to arrange a viewing for this property.' : 'Please contact me about this property.';
+      requestPanel.innerHTML = `
+        <h3>${actionLabel}</h3>
+        <form class="property-inquiry-form">
+          <label>Your name<input name="name" maxlength="120" autocomplete="name" required></label>
+          <label>Email<input name="email" type="email" maxlength="254" autocomplete="email" required></label>
+          <label>Phone<input name="phone" type="tel" maxlength="50" autocomplete="tel" required></label>
+          <label>Message<textarea name="message" maxlength="3000" required>${defaultMessage}</textarea></label>
+          <label class="property-inquiry-consent"><input name="consent" type="checkbox" required><span>I consent to be contacted about this property.</span></label>
+          <button class="btn-primary" type="submit">Send request</button>
+          <button class="btn-outline" type="button" data-request-back>Back to photos</button>
+          <p class="property-gallery-request-status" role="status"></p>
+        </form>
+      `;
+      requestPanel.querySelector('[data-request-back]').addEventListener('click', () => { mode = 'gallery'; renderRequestPanel(); });
+      requestPanel.querySelector('form').addEventListener('submit', async event => {
+        event.preventDefault();
+        const form = event.currentTarget;
+        const submitButton = form.querySelector('button[type="submit"]');
+        const status = form.querySelector('.property-gallery-request-status');
+        submitButton.disabled = true;
+        status.textContent = 'Sending your request...';
+        try {
+          const { error } = await supabase.from('property_inquiries').insert({
+            property_id: property.id,
+            agent_id: property.agentId || null,
+            name: form.elements.name.value.trim(),
+            phone: form.elements.phone.value.trim(),
+            email: form.elements.email.value.trim(),
+            message: `${mode === 'viewing' ? 'Viewing request' : 'Contact request'}\n\n${form.elements.message.value.trim()}`,
+            consent: form.elements.consent.checked
+          });
+          if (error) throw error;
+          status.textContent = 'Request sent. The dealer will contact you soon.';
+          form.reset();
+        } catch (error) {
+          status.textContent = error.message || 'Unable to send your request. Please try again.';
+          submitButton.disabled = false;
+        }
+      });
+    };
+
+    overlay.querySelector('.property-gallery-close').addEventListener('click', () => overlay.remove());
+    overlay.addEventListener('click', event => { if (event.target === overlay) overlay.remove(); });
+    document.addEventListener('keydown', function closeOnEscape(event) {
+      if (event.key === 'Escape' && document.body.contains(overlay)) overlay.remove();
+      if (!document.body.contains(overlay)) document.removeEventListener('keydown', closeOnEscape);
+    });
+    renderMedia();
+    renderRequestPanel();
+  }
+
   async renderPropertySearchPage(purpose = 'sale') {
     const mainContainer = document.getElementById('main-content');
     if (!mainContainer) return;
@@ -3677,12 +3838,13 @@ class AlMahaApp {
           <div class="property-results-grid">
             ${properties.map(p => `
               <div class="listing-card">
-                <div class="listing-image-container"><img src="${p.image}" alt="${p.title}">${p.verified ? `<span class="badge-verified">✓ ${t.verified}</span>` : ''}</div>
+                <div class="listing-image-container"><button class="listing-gallery-trigger" type="button" data-property-action="gallery" data-property-id="${escapeHtml(p.id)}" aria-label="View photos for ${escapeHtml(p.title)}"><img src="${escapeHtml(p.image)}" alt="${escapeHtml(p.title)}"></button>${p.verified ? `<span class="badge-verified">✓ ${t.verified}</span>` : ''}</div>
                 <div class="listing-content">
                   <div class="listing-price">${this.formatPrice(p.price, state.currency)}</div>
                   <div class="listing-features"><span>${p.bedrooms} ${t.beds}</span><span>${p.bathrooms} ${t.baths}</span><span>${p.areaSqft} ${t.sqft}</span></div>
                   <h3 class="listing-title">${p.title}</h3>
                   <div class="listing-location">${p.location}</div>
+                  <div class="listing-actions-footer"><button class="btn-outline" type="button" data-property-action="contact" data-property-id="${escapeHtml(p.id)}">Contact dealer</button><button class="btn-primary" type="button" data-property-action="viewing" data-property-id="${escapeHtml(p.id)}">Book a viewing</button></div>
                 </div>
               </div>
             `).join('')}
@@ -3695,6 +3857,7 @@ class AlMahaApp {
       button.addEventListener('click', () => this.renderPropertySearchPage(button.dataset.searchPurpose));
     });
     this.setupSearchControls();
+    this.bindPropertyActions(mainContainer, properties);
   }
 
   initHeader() {
@@ -3899,7 +4062,7 @@ class AlMahaApp {
           ${properties.map(p => `
             <div class="listing-card">
               <div class="listing-image-container">
-                <img src="${p.image}" alt="${p.title}">
+                <button class="listing-gallery-trigger" type="button" data-property-action="gallery" data-property-id="${escapeHtml(p.id)}" aria-label="View photos for ${escapeHtml(p.title)}"><img src="${escapeHtml(p.image)}" alt="${escapeHtml(p.title)}"></button>
                 ${p.verified ? `<span class="badge-verified">✓ ${t.verified}</span>` : ''}
               </div>
               <div class="listing-content">
@@ -3912,8 +4075,9 @@ class AlMahaApp {
                 <h3 class="listing-title">${p.title}</h3>
                 <div class="listing-location">${p.location}</div>
                 <div class="listing-actions-footer">
-                  <button class="btn-outline" onclick="alert('Contacting Agent for ${p.referenceNumber}')">${t.contact}</button>
-                  <button class="btn-primary" onclick="alert('Viewing Requested')">${t.bookViewing}</button>
+                  <button class="btn-outline" type="button" data-property-action="gallery" data-property-id="${escapeHtml(p.id)}">View photos${p.images?.length > 1 ? ` (${p.images.length})` : ''}</button>
+                  <button class="btn-outline" type="button" data-property-action="contact" data-property-id="${escapeHtml(p.id)}">Contact dealer</button>
+                  <button class="btn-primary" type="button" data-property-action="viewing" data-property-id="${escapeHtml(p.id)}">${t.bookViewing}</button>
                 </div>
               </div>
             </div>
@@ -3921,6 +4085,8 @@ class AlMahaApp {
         </div>
       </section>
     `;
+
+    this.bindPropertyActions(mainContainer, properties);
 
   }
 }

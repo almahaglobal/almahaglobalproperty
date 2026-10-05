@@ -92,7 +92,7 @@ export const ApiService = {
     try {
       let query = supabase
         .from('properties')
-        .select('id, reference_number, title, price, currency, purpose, property_type, bedrooms, bathrooms, area_sqft, status, is_verified, description')
+        .select('id, reference_number, title, price, currency, purpose, property_type, bedrooms, bathrooms, area_sqft, status, is_verified, description, agent_id, property_media(url, media_type, is_primary)')
         .in('status', ['available', 'approved', 'verified'])
         .order('created_at', { ascending: false });
 
@@ -104,7 +104,18 @@ export const ApiService = {
       if (error) throw error;
 
       if (Array.isArray(data) && data.length > 0) {
-        return data.map(property => ({
+        return await Promise.all(data.map(async property => {
+          const media = await Promise.all((property.property_media || []).map(async item => {
+            const { data: signedData, error: signedError } = await supabase.storage
+              .from('property-images')
+              .createSignedUrl(item.url, 3600);
+            return signedError || !signedData?.signedUrl
+              ? null
+              : { url: signedData.signedUrl, type: item.media_type, isPrimary: item.is_primary };
+          }));
+          const images = media.filter(Boolean);
+          const coverImage = images.find(item => item.isPrimary) || images[0];
+          return ({
           id: property.id,
           referenceNumber: property.reference_number,
           title: property.title,
@@ -117,9 +128,12 @@ export const ApiService = {
           areaSqft: Number(property.area_sqft || 0),
           location: 'Dubai, United Arab Emirates',
           developer: 'Al Maha Global Property',
-          image: 'https://images.unsplash.com/photo-1600585154340-be6161a56a0c?auto=format&fit=crop&w=800&q=80',
+          image: coverImage?.url || 'https://images.unsplash.com/photo-1600585154340-be6161a56a0c?auto=format&fit=crop&w=800&q=80',
+          images,
+          agentId: property.agent_id,
           verified: property.is_verified === true || ['approved', 'verified'].includes(property.status),
           features: property.description ? [property.description.slice(0, 48)] : ['Verified listing']
+          });
         }));
       }
     } catch (error) {
