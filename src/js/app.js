@@ -1934,8 +1934,7 @@ class AlMahaApp {
         locationStatus.textContent = 'Property location and address saved.';
       });
 
-      updateLocation(marker.getLatLng());
-      selectedLocation.textContent = 'Select a point on the map to save the property location.';
+      selectedLocation.textContent = 'Search for the property or select its point on the map, then save the location.';
     } catch (error) {
       mapElement.classList.add('map-unavailable');
       mapElement.textContent = 'Map could not be loaded. Enter the latitude and longitude manually.';
@@ -2448,9 +2447,9 @@ class AlMahaApp {
       buildingProject: draft.buildingProject || '',
       buildingNumber: draft.buildingNumber || '',
       unitNumber: draft.unitNumber || '',
-      latitude: draft.latitude || '25.2048',
-      longitude: draft.longitude || '55.2708',
-      formattedAddress: draft.formattedAddress || 'Downtown Dubai, Dubai, United Arab Emirates',
+      latitude: draft.latitude || '',
+      longitude: draft.longitude || '',
+      formattedAddress: draft.formattedAddress || '',
       listingPurpose: draft.listingPurpose || 'For Sale',
       price: draft.price || '',
       rentTerm: draft.rentTerm || 'Monthly',
@@ -2887,10 +2886,12 @@ class AlMahaApp {
       }
 
       if (index === 3) {
-        const lat = Number(form.querySelector('[name="latitude"]').value);
-        const lng = Number(form.querySelector('[name="longitude"]').value);
-        if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
-          document.getElementById('owner-form-status').textContent = 'Confirm the property location and coordinates before continuing.';
+        const latitudeValue = form.querySelector('[name="latitude"]').value.trim();
+        const longitudeValue = form.querySelector('[name="longitude"]').value.trim();
+        const lat = Number(latitudeValue);
+        const lng = Number(longitudeValue);
+        if (!latitudeValue || !longitudeValue || !Number.isFinite(lat) || !Number.isFinite(lng) || lat < -90 || lat > 90 || lng < -180 || lng > 180 || (lat === 0 && lng === 0)) {
+          document.getElementById('owner-form-status').textContent = 'Choose and confirm the property location on the map before continuing.';
           return false;
         }
       }
@@ -3106,8 +3107,8 @@ class AlMahaApp {
           furnishing: values.furnishing || 'Unspecified',
           completion_status: values.propertyStatus || 'Ready',
           ownership: values.ownershipType || 'Individual',
-          latitude: Number(values.latitude || 25.2048),
-          longitude: Number(values.longitude || 55.2708),
+          latitude: Number(values.latitude),
+          longitude: Number(values.longitude),
           is_verified: propertyApprovalStatus === 'approved',
           is_featured: false,
           status: propertyApprovalStatus,
@@ -3480,8 +3481,8 @@ class AlMahaApp {
           area_sqft: Number(formData.get('area')),
           country_code: formData.get('country'),
           city: formData.get('city'),
-          latitude: Number(formData.get('latitude')),
-          longitude: Number(formData.get('longitude')),
+          latitude: formData.get('latitude') ? Number(formData.get('latitude')) : null,
+          longitude: formData.get('longitude') ? Number(formData.get('longitude')) : null,
           status: 'under_review'
         }).select('id, reference_number').single();
 
@@ -3615,11 +3616,69 @@ class AlMahaApp {
     document.getElementById('btn-submission-add')?.addEventListener('click', () => this.renderSellPage());
   }
 
+  getPropertyCoordinates(property) {
+    if (property?.latitude == null || property?.longitude == null || property.latitude === '' || property.longitude === '') return null;
+    const latitude = Number(property.latitude);
+    const longitude = Number(property.longitude);
+    if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
+    if (latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180) return null;
+    if (latitude === 0 && longitude === 0) return null;
+    return { latitude, longitude };
+  }
+
+  async showPropertyMap(property) {
+    const coordinates = this.getPropertyCoordinates(property);
+    if (!coordinates) return;
+
+    document.getElementById('property-map-modal')?.remove();
+    const { latitude, longitude } = coordinates;
+    const openMapUrl = `https://www.openstreetmap.org/?mlat=${latitude}&mlon=${longitude}#map=16/${latitude}/${longitude}`;
+    const overlay = document.createElement('div');
+    overlay.id = 'property-map-modal';
+    overlay.className = 'property-map-backdrop';
+    overlay.innerHTML = `
+      <section class="property-map-dialog" role="dialog" aria-modal="true" aria-labelledby="property-map-title">
+        <button class="property-map-close" type="button" aria-label="Close map">&#215;</button>
+        <div class="property-map-heading"><span class="auth-eyebrow">PROPERTY LOCATION</span><h2 id="property-map-title">${escapeHtml(property.title)}</h2><p>${escapeHtml(property.location || 'Location pin')}</p></div>
+        <div class="property-map-frame" aria-label="Map showing property location"></div>
+        <p class="property-map-coordinates">${latitude.toFixed(6)}, ${longitude.toFixed(6)}</p>
+        <a class="btn-outline property-map-external" href="${escapeHtml(openMapUrl)}" target="_blank" rel="noopener">Open larger map</a>
+      </section>
+    `;
+    document.body.append(overlay);
+    const close = () => overlay.remove();
+    overlay.querySelector('.property-map-close').addEventListener('click', close);
+    overlay.addEventListener('click', event => { if (event.target === overlay) close(); });
+    document.addEventListener('keydown', function closeOnEscape(event) {
+      if (event.key === 'Escape' && document.body.contains(overlay)) close();
+      if (!document.body.contains(overlay)) document.removeEventListener('keydown', closeOnEscape);
+    });
+
+    const mapElement = overlay.querySelector('.property-map-frame');
+    try {
+      const leaflet = await import('https://esm.sh/leaflet@1.9.4');
+      const map = leaflet.map(mapElement, { scrollWheelZoom: false }).setView([latitude, longitude], 15);
+      leaflet.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        maxZoom: 19,
+        attribution: '&copy; OpenStreetMap contributors'
+      }).addTo(map);
+      leaflet.marker([latitude, longitude]).addTo(map).bindPopup(escapeHtml(property.title)).openPopup();
+    } catch (error) {
+      mapElement.textContent = 'Map could not be loaded. Use Open larger map to view this location.';
+    }
+  }
+
   bindPropertyActions(container, properties) {
     container.querySelectorAll('[data-property-action]').forEach(button => {
       button.addEventListener('click', () => {
         const property = properties.find(item => item.id === button.dataset.propertyId);
         if (property) this.showPropertyGallery(property, button.dataset.propertyAction);
+      });
+    });
+    container.querySelectorAll('[data-property-map]').forEach(button => {
+      button.addEventListener('click', () => {
+        const property = properties.find(item => item.id === button.dataset.propertyId);
+        if (property) this.showPropertyMap(property);
       });
     });
   }
@@ -3844,7 +3903,7 @@ class AlMahaApp {
                   <div class="listing-features"><span>${p.bedrooms} ${t.beds}</span><span>${p.bathrooms} ${t.baths}</span><span>${p.areaSqft} ${t.sqft}</span></div>
                   <h3 class="listing-title">${p.title}</h3>
                   <div class="listing-location">${p.location}</div>
-                  <div class="listing-actions-footer"><button class="btn-outline" type="button" data-property-action="contact" data-property-id="${escapeHtml(p.id)}">Contact dealer</button><button class="btn-primary" type="button" data-property-action="viewing" data-property-id="${escapeHtml(p.id)}">Book a viewing</button></div>
+                  <div class="listing-actions-footer">${this.getPropertyCoordinates(p) ? `<button class="btn-outline" type="button" data-property-map data-property-id="${escapeHtml(p.id)}">View map</button>` : ''}<button class="btn-outline" type="button" data-property-action="contact" data-property-id="${escapeHtml(p.id)}">Contact dealer</button><button class="btn-primary" type="button" data-property-action="viewing" data-property-id="${escapeHtml(p.id)}">Book a viewing</button></div>
                 </div>
               </div>
             `).join('')}
@@ -4075,6 +4134,7 @@ class AlMahaApp {
                 <h3 class="listing-title">${p.title}</h3>
                 <div class="listing-location">${p.location}</div>
                 <div class="listing-actions-footer">
+                  ${this.getPropertyCoordinates(p) ? `<button class="btn-outline" type="button" data-property-map data-property-id="${escapeHtml(p.id)}">View map</button>` : ''}
                   <button class="btn-outline" type="button" data-property-action="gallery" data-property-id="${escapeHtml(p.id)}">View photos${p.images?.length > 1 ? ` (${p.images.length})` : ''}</button>
                   <button class="btn-outline" type="button" data-property-action="contact" data-property-id="${escapeHtml(p.id)}">Contact dealer</button>
                   <button class="btn-primary" type="button" data-property-action="viewing" data-property-id="${escapeHtml(p.id)}">${t.bookViewing}</button>

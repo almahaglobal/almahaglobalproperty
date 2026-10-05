@@ -321,6 +321,74 @@
   font-size: 0.82rem;
 }
 
+.property-map-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 2010;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(8, 17, 22, 0.78);
+}
+
+.property-map-dialog {
+  position: relative;
+  width: min(860px, 100%);
+  max-height: calc(100vh - 40px);
+  padding: 22px;
+  overflow: auto;
+  border-radius: 8px;
+  background: var(--bg-surface);
+  color: var(--text-primary);
+}
+
+.property-map-heading {
+  padding-right: 48px;
+  margin-bottom: 14px;
+}
+
+.property-map-heading h2 {
+  margin: 5px 0;
+  overflow-wrap: anywhere;
+  font-size: 1.3rem;
+}
+
+.property-map-frame {
+  width: 100%;
+  height: min(58vh, 480px);
+  min-height: 280px;
+  overflow: hidden;
+  border-radius: 4px;
+  background: #e8eceb;
+  color: var(--text-secondary);
+}
+
+.property-map-close {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  z-index: 2;
+  width: 38px;
+  height: 38px;
+  border: 1px solid var(--border-color);
+  border-radius: 50%;
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font-size: 1.35rem;
+  cursor: pointer;
+}
+
+.property-map-coordinates {
+  margin: 8px 0 12px;
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+}
+
+.property-map-external {
+  display: inline-flex;
+  align-items: center;
+}
+
 @media (max-width: 760px) {
   .property-gallery-backdrop {
     padding: 8px;
@@ -340,6 +408,20 @@
 
   .property-gallery-sidebar {
     padding: 4px 0 0;
+  }
+
+  .property-map-backdrop {
+    padding: 8px;
+  }
+
+  .property-map-dialog {
+    max-height: calc(100vh - 16px);
+    padding: 14px;
+  }
+
+  .property-map-frame {
+    height: 52vh;
+    min-height: 280px;
   }
 }
 

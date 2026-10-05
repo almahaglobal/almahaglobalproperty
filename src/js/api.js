@@ -92,7 +92,7 @@ export const ApiService = {
     try {
       let query = supabase
         .from('properties')
-        .select('id, reference_number, title, price, currency, purpose, property_type, bedrooms, bathrooms, area_sqft, status, is_verified, description, agent_id, property_media(url, media_type, is_primary)')
+        .select('id, reference_number, title, price, currency, purpose, property_type, bedrooms, bathrooms, area_sqft, latitude, longitude, status, is_verified, description, agent_id, property_media(url, media_type, is_primary)')
         .in('status', ['available', 'approved', 'verified'])
         .order('created_at', { ascending: false });
 
@@ -127,6 +127,8 @@ export const ApiService = {
           bathrooms: Number(property.bathrooms || 0),
           areaSqft: Number(property.area_sqft || 0),
           location: 'Dubai, United Arab Emirates',
+          latitude: property.latitude,
+          longitude: property.longitude,
           developer: 'Al Maha Global Property',
           image: coverImage?.url || 'https://images.unsplash.com/photo-1600585154340-be6161a56a0c?auto=format&fit=crop&w=800&q=80',
           images,
