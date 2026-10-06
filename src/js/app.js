@@ -38,7 +38,7 @@ function addResendConfirmationButton(form, status, email) {
   button.type = 'button';
   button.className = 'auth-switch';
   button.dataset.resendConfirmation = '';
-  button.textContent = 'Resend confirmation email';
+  button.textContent = 'Send a new verification email';
   button.addEventListener('click', async () => {
     button.disabled = true;
     status.textContent = 'Requesting a confirmation email...';
@@ -2294,6 +2294,7 @@ class AlMahaApp {
       if (error) {
         status.textContent = error.message;
         if (error.code === 'email_not_confirmed') {
+          status.textContent = 'Your email address is not verified. Would you like us to send a new verification email?';
           addResendConfirmationButton(form, status, form.elements.email.value.trim());
         }
         return;
