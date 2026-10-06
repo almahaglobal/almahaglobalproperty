@@ -440,7 +440,7 @@ class AlMahaApp {
         ['Created', account.created_at ? new Date(account.created_at).toLocaleString() : 'Unknown'],
         ['Updated', account.updated_at ? new Date(account.updated_at).toLocaleString() : 'Unknown']
       ];
-      const reviewActions = ['owner', 'agent'].includes(account.role) && account.verification_status !== 'approved'
+      const reviewActions = ['owner', 'agent', 'buyer', 'tenant'].includes(account.role) && account.verification_status !== 'approved'
         ? `<button class="btn-primary" type="button" data-review-type="account" data-review-decision="approved" data-user-id="${escapeHtml(account.id)}">Approve account</button><button class="btn-outline" type="button" data-review-type="account" data-review-decision="rejected" data-user-id="${escapeHtml(account.id)}">Reject</button>`
         : '';
       const isAdministrator = ['admin', 'platform_owner', 'company_owner', 'company_admin', 'staff'].includes(account.role);
@@ -663,7 +663,10 @@ class AlMahaApp {
           const { error } = await supabase.functions.invoke('admin-delete-user', {
             body: { targetUserId: button.dataset.adminDeleteUser }
           });
-          if (error) throw error;
+          if (error) {
+            const details = await error.context?.json?.().catch(() => null);
+            throw new Error(details?.error || error.message);
+          }
           await this.renderAdminVerificationPage(this.adminActiveTab);
         } catch (error) {
           button.disabled = false;
