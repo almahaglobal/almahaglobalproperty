@@ -38,10 +38,10 @@ function addResendConfirmationButton(form, status, email) {
   button.type = 'button';
   button.className = 'auth-switch';
   button.dataset.resendConfirmation = '';
-  button.textContent = 'Send a new verification email';
+  button.textContent = 'Resend verification email';
   button.addEventListener('click', async () => {
     button.disabled = true;
-    status.textContent = 'Requesting a confirmation email...';
+    status.textContent = 'Sending...';
 
     try {
       const { error } = await supabase.auth.resend({
@@ -50,11 +50,12 @@ function addResendConfirmationButton(form, status, email) {
         options: { emailRedirectTo: getAuthRedirectUrl() }
       });
       if (error) throw error;
-      button.textContent = 'Confirmation email requested';
-      status.textContent = 'If this account still needs confirmation, an email has been requested. Check your inbox and spam folder.';
+      button.textContent = 'Email sent';
+      status.textContent = 'Verification email sent. Check your inbox and spam.';
     } catch (error) {
       button.disabled = false;
-      status.textContent = `Could not resend the confirmation email: ${error.message || 'Please try again.'} Check Supabase Auth logs and SMTP settings.`;
+      console.error('Resend verification failed:', error);
+      status.textContent = `Email not sent: ${error.message || 'try again later.'}`;
     }
   });
   form.insertBefore(button, status);
@@ -2294,7 +2295,7 @@ class AlMahaApp {
       if (error) {
         status.textContent = error.message;
         if (error.code === 'email_not_confirmed') {
-          status.textContent = 'Your email address is not verified. Would you like us to send a new verification email?';
+          status.textContent = 'Email not verified.';
           addResendConfirmationButton(form, status, form.elements.email.value.trim());
         }
         return;
