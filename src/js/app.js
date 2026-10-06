@@ -660,13 +660,10 @@ class AlMahaApp {
         const status = mainContainer.querySelector('#admin-action-status');
         if (status) status.textContent = `Deleting ${email}...`;
         try {
-          const { error } = await supabase.functions.invoke('admin-delete-user', {
-            body: { targetUserId: button.dataset.adminDeleteUser }
+          const { error } = await supabase.rpc('admin_delete_user', {
+            target_user_id: button.dataset.adminDeleteUser
           });
-          if (error) {
-            const details = await error.context?.json?.().catch(() => null);
-            throw new Error(details?.error || error.message);
-          }
+          if (error) throw error;
           await this.renderAdminVerificationPage(this.adminActiveTab);
         } catch (error) {
           button.disabled = false;
