@@ -31,6 +31,35 @@ function getAuthRedirectUrl() {
     : 'https://www.almahaglobalproperty.com/';
 }
 
+function addResendConfirmationButton(form, status, email) {
+  if (form.querySelector('[data-resend-confirmation]')) return;
+
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'auth-switch';
+  button.dataset.resendConfirmation = '';
+  button.textContent = 'Resend confirmation email';
+  button.addEventListener('click', async () => {
+    button.disabled = true;
+    status.textContent = 'Requesting a confirmation email...';
+
+    try {
+      const { error } = await supabase.auth.resend({
+        type: 'signup',
+        email,
+        options: { emailRedirectTo: getAuthRedirectUrl() }
+      });
+      if (error) throw error;
+      button.textContent = 'Confirmation email requested';
+      status.textContent = 'If this account still needs confirmation, an email has been requested. Check your inbox and spam folder.';
+    } catch (error) {
+      button.disabled = false;
+      status.textContent = `Could not resend the confirmation email: ${error.message || 'Please try again.'} Check Supabase Auth logs and SMTP settings.`;
+    }
+  });
+  form.insertBefore(button, status);
+}
+
 function openKycQueue() {
   return new Promise((resolve, reject) => {
     const request = indexedDB.open(KYC_QUEUE_DB, 1);
@@ -2185,6 +2214,9 @@ class AlMahaApp {
       if (error) {
         if (documentEntries.length > 0) await removePendingKycDocuments(email);
         document.getElementById('auth-status').textContent = error.message;
+        if (/email|confirm/i.test(error.message)) {
+          addResendConfirmationButton(form, document.getElementById('auth-status'), email);
+        }
         return;
       }
 
@@ -2198,11 +2230,13 @@ class AlMahaApp {
         await removePendingKycDocuments(email);
       }
 
-      document.getElementById('auth-status').textContent = uploadResult
+      const status = document.getElementById('auth-status');
+      status.textContent = uploadResult
         ? `${uploadResult.uploadedDocuments.length} document(s) uploaded and confirmed in Supabase. Your account is pending administrator review.`
         : data.session
           ? authText.pending
         : 'Account created. Check your email, verify your account, then sign in to complete document submission.';
+      if (!data.session) addResendConfirmationButton(form, status, email);
     });
   }
 
@@ -2259,6 +2293,9 @@ class AlMahaApp {
       submitButton.disabled = false;
       if (error) {
         status.textContent = error.message;
+        if (error.code === 'email_not_confirmed') {
+          addResendConfirmationButton(form, status, form.elements.email.value.trim());
+        }
         return;
       }
 
