@@ -1,7 +1,9 @@
 import { withSupabase } from 'npm:@supabase/server@1';
+import nodemailer from 'npm:nodemailer@6.9.16';
 
 const allowedOrigins = new Set([
   'https://www.almahaglobalproperty.com',
+  'https://almahaglobalproperty.com',
   'http://127.0.0.1:50758',
   'http://localhost:50758',
   'http://127.0.0.1:4173'
@@ -50,10 +52,14 @@ const handler = withSupabase({ auth: 'user' }, async (request, context) => {
   const clientSecret = Deno.env.get('GMAIL_CLIENT_SECRET');
   const refreshToken = Deno.env.get('GMAIL_REFRESH_TOKEN');
   const configuredSender = Deno.env.get('GMAIL_SENDER_EMAIL')?.toLowerCase();
-  if (!clientId || !clientSecret || !refreshToken || configuredSender !== senderAddress) {
-    return Response.json({ error: 'Gmail sending is not configured for almahglobalproperty@gmail.com.' }, { status: 503 });
+  const useGmail = !!(clientId && clientSecret && refreshToken && configuredSender === senderAddress);
+  const smtpHost = Deno.env.get('SMTP_HOST');
+  const smtpUser = Deno.env.get('SMTP_USER');
+  const smtpPassword = Deno.env.get('SMTP_PASSWORD');
+  const smtpPort = Number(Deno.env.get('SMTP_PORT') || 587);
+  if (!useGmail && !(smtpHost && smtpUser && smtpPassword)) {
+    return Response.json({ error: 'Email sending is not configured (set SMTP_* or GMAIL_* secrets).' }, { status: 503 });
   }
-
   let body: { messageId?: string; replyBody?: string };
   try {
     body = await request.json();
@@ -81,6 +87,21 @@ const handler = withSupabase({ auth: 'user' }, async (request, context) => {
     return Response.json({ error: 'The customer email address is invalid.' }, { status: 400 });
   }
 
+  if (!useGmail) {
+    try {
+      const transporter = nodemailer.createTransport({ host: smtpHost, port: smtpPort, secure: smtpPort === 465, auth: { user: smtpUser, pass: smtpPassword } });
+      await transporter.sendMail({
+        from: `Al Maha Global Property <${smtpUser!.includes('@') ? smtpUser : senderAddress}>`,
+        to: message.email,
+        replyTo: senderAddress,
+        subject: `Re: ${message.subject.replace(/[\r\n]+/g, ' ').trim()}`,
+        text: replyBody
+      });
+    } catch (error) {
+      console.error('SMTP send failed:', error instanceof Error ? error.message : 'Unknown error');
+      return Response.json({ error: 'SMTP could not send the reply. Check the SMTP settings.' }, { status: 502 });
+    }
+  } else {
   const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -123,6 +144,8 @@ const handler = withSupabase({ auth: 'user' }, async (request, context) => {
   if (!gmailResponse.ok) {
     console.error('Gmail send failed with status', gmailResponse.status);
     return Response.json({ error: 'Gmail could not send the reply. Check the account authorization and Gmail API settings.' }, { status: 502 });
+  }
+
   }
 
   const now = new Date().toISOString();

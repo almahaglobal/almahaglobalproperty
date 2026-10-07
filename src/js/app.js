@@ -487,6 +487,7 @@ class AlMahaApp {
         <p class="admin-record-description">${escapeHtml(property.description || 'No description provided.')}</p>
         <div class="admin-record-facts"><span>${escapeHtml(property.property_type || 'Property')}</span><span>${escapeHtml(location || 'Location not provided')}</span><span>${Number(property.bedrooms || 0)} beds</span><span>${Number(property.bathrooms || 0)} baths</span><span>${Number(property.area_sqft || 0).toLocaleString('en-US')} sqft</span></div>
         <div class="admin-upload-gallery">${photos.join('') || '<span class="admin-empty-inline">No property photos available.</span>'}</div>
+        <div class="admin-review-actions"><button class="btn-outline" type="button" data-manage-property-media="${escapeHtml(property.id)}" data-property-title="${escapeHtml(property.title)}">Manage property photos &amp; videos</button></div>
         <div class="admin-upload-list">${evidence.join('') || '<p class="admin-empty-inline">No verification uploads are attached to this listing.</p>'}</div>
       </article>`;
     }));
@@ -669,6 +670,12 @@ class AlMahaApp {
           button.disabled = false;
           if (status) status.textContent = error.message || 'Unable to delete the account.';
         }
+      });
+    });
+
+    mainContainer.querySelectorAll('[data-manage-property-media]').forEach(button => {
+      button.addEventListener('click', () => {
+        this.showPropertyMediaManager(button.dataset.managePropertyMedia, button.dataset.propertyTitle);
       });
     });
 
@@ -887,7 +894,7 @@ class AlMahaApp {
                   <div><strong>${property.title}</strong><span>${property.referenceNumber} · ${property.propertyType} · ${property.purpose === 'rent' ? 'For rent' : 'For sale'}</span></div>
                   <strong>${this.formatPrice(property.price, property.currency)}</strong>
                   <span class="status-badge ${property.status === 'rejected' ? 'pending' : property.verified || ['approved', 'available', 'verified'].includes(property.status) ? 'approved' : 'pending'}">${propertyStatusLabels[property.status] || 'Pending review'}</span>
-                  <button class="btn-outline" data-edit-property="${property.id}" type="button">Edit</button>
+                  <div class="profile-property-actions"><button class="btn-outline" data-manage-property-media="${property.id}" data-property-title="${escapeHtml(property.title)}" type="button">Photos &amp; videos</button><button class="btn-outline" data-edit-property="${property.id}" type="button">Edit</button></div>
                 </div>`).join('')}</div>` : '<p>You have not submitted any properties yet.</p>'}
             </section>` : ''}
             <section class="profile-panel" id="profile-account-panel">
@@ -936,6 +943,11 @@ class AlMahaApp {
     });
     mainContainer.querySelectorAll('[data-edit-property]').forEach(button => {
       button.addEventListener('click', () => this.renderPropertyEditPage(button.dataset.editProperty));
+    });
+    mainContainer.querySelectorAll('[data-manage-property-media]').forEach(button => {
+      button.addEventListener('click', () => {
+        this.showPropertyMediaManager(button.dataset.managePropertyMedia, button.dataset.propertyTitle);
+      });
     });
     document.getElementById('btn-profile-review')?.addEventListener('click', () => this.renderAdminVerificationPage());
     document.getElementById('btn-profile-administrators')?.addEventListener('click', () => this.renderAdministratorsPage());
@@ -3722,6 +3734,259 @@ class AlMahaApp {
     });
   }
 
+  async showPropertyMediaManager(propertyId, propertyTitle = 'Property') {
+    document.getElementById('property-media-manager')?.remove();
+    const overlay = document.createElement('div');
+    overlay.id = 'property-media-manager';
+    overlay.className = 'property-media-manager-backdrop';
+    overlay.innerHTML = `
+      <section class="property-media-manager-dialog" role="dialog" aria-modal="true" aria-labelledby="property-media-manager-title">
+        <button class="property-gallery-close" type="button" aria-label="Close media manager">&#215;</button>
+        <span class="auth-eyebrow">PROPERTY MEDIA</span>
+        <h2 id="property-media-manager-title">${escapeHtml(propertyTitle)}</h2>
+        <p>Add or remove listing photos and videos, or choose the main property image.</p>
+        <form class="property-media-upload-form">
+          <label>Choose images or videos<input name="mediaFiles" type="file" accept="image/jpeg,image/png,image/webp,video/mp4,video/quicktime,video/webm" multiple required></label>
+          <small>JPG, PNG or WebP up to 10 MB each. MP4, MOV or WebM up to 50 MB each.</small>
+          <button class="btn-primary" type="submit">Upload media</button>
+        </form>
+        <p class="property-media-manager-status" role="status"></p>
+        <div class="property-media-manager-list" aria-live="polite"></div>
+      </section>
+    `;
+    document.body.append(overlay);
+
+    const status = overlay.querySelector('.property-media-manager-status');
+    const mediaList = overlay.querySelector('.property-media-manager-list');
+    const uploadForm = overlay.querySelector('.property-media-upload-form');
+    const close = () => overlay.remove();
+    overlay.querySelector('.property-gallery-close').addEventListener('click', close);
+    overlay.addEventListener('click', event => { if (event.target === overlay) close(); });
+    document.addEventListener('keydown', function closeOnEscape(event) {
+      if (event.key === 'Escape' && document.body.contains(overlay)) close();
+      if (!document.body.contains(overlay)) document.removeEventListener('keydown', closeOnEscape);
+    });
+
+    let mediaAccess;
+    try {
+      const { data, error } = await supabase.rpc('can_manage_property_media', {
+        target_property_id: propertyId
+      });
+      if (error) throw error;
+      mediaAccess = data;
+    } catch (error) {
+      status.textContent = error.message || 'Unable to verify access to this property.';
+      uploadForm.hidden = true;
+      return;
+    }
+    if (mediaAccess !== true) {
+      status.textContent = 'You do not have permission to manage media for this property.';
+      uploadForm.hidden = true;
+      return;
+    }
+
+    const loadMedia = async () => {
+      const { data: rows, error } = await supabase
+        .from('property_media')
+        .select('id, url, media_type, is_primary')
+        .eq('property_id', propertyId)
+        .order('is_primary', { ascending: false })
+        .order('url', { ascending: true });
+      if (error) throw error;
+      const media = await Promise.all((rows || []).map(async item => {
+        const { data, error: signedUrlError } = await supabase.storage
+          .from('property-images')
+          .createSignedUrl(item.url, 3600);
+        if (signedUrlError || !data?.signedUrl) {
+          throw new Error(signedUrlError?.message || `Unable to load ${item.media_type} preview.`);
+        }
+        return { ...item, signedUrl: data.signedUrl };
+      }));
+
+      mediaList.innerHTML = media.length ? media.map(item => `
+        <article class="property-media-manager-item">
+          ${item.media_type === 'video'
+            ? `<video src="${escapeHtml(item.signedUrl)}" controls preload="metadata"></video>`
+            : `<img src="${escapeHtml(item.signedUrl)}" alt="${escapeHtml(propertyTitle)}" loading="lazy">`}
+          <div><strong>${item.media_type === 'video' ? 'Video' : 'Image'}${item.is_primary ? ' · Main image' : ''}</strong>
+            <div class="property-media-manager-actions">
+              ${item.media_type === 'image' && !item.is_primary ? `<button class="btn-outline" type="button" data-set-primary-media="${escapeHtml(item.id)}">Set as main image</button>` : ''}
+              <button class="btn-outline" type="button" data-delete-property-media="${escapeHtml(item.id)}" data-media-path="${escapeHtml(item.url)}" data-media-type="${escapeHtml(item.media_type)}" data-is-primary="${item.is_primary}">Delete</button>
+            </div>
+          </div>
+        </article>
+      `).join('') : '<p>No property photos or videos have been uploaded yet.</p>';
+
+      mediaList.querySelectorAll('[data-set-primary-media]').forEach(button => {
+        button.addEventListener('click', async () => {
+          button.disabled = true;
+          status.textContent = 'Updating main property image...';
+          try {
+            const { error: primaryError } = await supabase.rpc('set_primary_property_image', {
+              target_property_id: propertyId,
+              target_media_id: button.dataset.setPrimaryMedia
+            });
+            if (primaryError) throw primaryError;
+          } catch (error) {
+            status.textContent = error.message || 'Unable to change the main property image.';
+            button.disabled = false;
+            return;
+          }
+          status.textContent = 'Main property image updated.';
+          try {
+            await loadMedia();
+          } catch (error) {
+            status.textContent = `Main image updated, but media could not be refreshed: ${error.message}`;
+          }
+        });
+      });
+
+      mediaList.querySelectorAll('[data-delete-property-media]').forEach(button => {
+        button.addEventListener('click', async () => {
+          const mediaType = button.dataset.mediaType;
+          if (!window.confirm(`Delete this property ${mediaType}? This cannot be undone.`)) return;
+          button.disabled = true;
+          status.textContent = 'Deleting media...';
+          try {
+            const { error: storageError } = await supabase.storage
+              .from('property-images')
+              .remove([button.dataset.mediaPath]);
+            if (storageError) throw storageError;
+            const { error: deleteError } = await supabase
+              .from('property_media')
+              .delete()
+              .eq('id', button.dataset.deletePropertyMedia)
+              .eq('property_id', propertyId);
+            if (deleteError) throw deleteError;
+
+            if (button.dataset.isPrimary === 'true') {
+              const fallback = media.find(item => item.media_type === 'image' && item.id !== button.dataset.deletePropertyMedia);
+              if (fallback) {
+                const { error: primaryError } = await supabase.rpc('set_primary_property_image', {
+                  target_property_id: propertyId,
+                  target_media_id: fallback.id
+                });
+                if (primaryError) {
+                  status.textContent = `Media deleted, but the main image could not be changed: ${primaryError.message}`;
+                  await loadMedia();
+                  return;
+                }
+              }
+            }
+            status.textContent = 'Media deleted.';
+            await loadMedia();
+          } catch (error) {
+            status.textContent = error.message || 'Unable to delete this media. Please try again.';
+            button.disabled = false;
+          }
+        });
+      });
+    };
+
+    try {
+      await loadMedia();
+    } catch (error) {
+      status.textContent = error.message || 'Unable to load property media.';
+    }
+
+    uploadForm.addEventListener('submit', async event => {
+      event.preventDefault();
+      const files = Array.from(uploadForm.elements.mediaFiles.files || []);
+      const allowedImages = ['image/jpeg', 'image/png', 'image/webp'];
+      const allowedVideos = ['video/mp4', 'video/quicktime', 'video/webm'];
+      const invalidFile = files.find(file => (
+        allowedImages.includes(file.type) ? file.size > 10 * 1024 * 1024
+          : allowedVideos.includes(file.type) ? file.size > 50 * 1024 * 1024
+            : true
+      ));
+      if (!files.length || invalidFile) {
+        status.textContent = invalidFile
+          ? `Unsupported file or size limit exceeded: ${invalidFile.name}`
+          : 'Choose at least one image or video to upload.';
+        return;
+      }
+
+      const submitButton = uploadForm.querySelector('button[type="submit"]');
+      let sessionData;
+      let sessionError;
+      try {
+        ({ data: sessionData, error: sessionError } = await supabase.auth.getSession());
+      } catch (error) {
+        status.textContent = error.message || 'Unable to verify your sign-in. Please try again.';
+        return;
+      }
+      const uploaderId = sessionData.session?.user?.id;
+      if (sessionError || !uploaderId) {
+        status.textContent = sessionError?.message || 'Sign in again before uploading property media.';
+        return;
+      }
+
+      submitButton.disabled = true;
+      status.textContent = 'Uploading selected media...';
+      const uploadedPaths = [];
+      let mediaRowsInserted = false;
+      try {
+        const { data: existingMedia, error: existingError } = await supabase
+          .from('property_media')
+          .select('id, media_type, is_primary')
+          .eq('property_id', propertyId);
+        if (existingError) throw existingError;
+
+        const newRows = [];
+        for (const file of files) {
+          const safeFilename = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+          const storagePath = `${uploaderId}/${propertyId}/${crypto.randomUUID()}-${safeFilename}`;
+          const { error: uploadError } = await supabase.storage
+            .from('property-images')
+            .upload(storagePath, file, { contentType: file.type, upsert: false });
+          if (uploadError) throw uploadError;
+          uploadedPaths.push(storagePath);
+          newRows.push({
+            property_id: propertyId,
+            media_type: file.type.startsWith('video/') ? 'video' : 'image',
+            url: storagePath,
+            is_primary: false
+          });
+        }
+
+        const { data: insertedRows, error: insertError } = await supabase
+          .from('property_media')
+          .insert(newRows)
+          .select('id, media_type');
+        if (insertError) throw insertError;
+        mediaRowsInserted = true;
+
+        const hasPrimaryImage = (existingMedia || []).some(item => item.media_type === 'image' && item.is_primary);
+        const firstNewImage = insertedRows?.find(item => item.media_type === 'image');
+        if (!hasPrimaryImage && firstNewImage) {
+          const { error: primaryError } = await supabase.rpc('set_primary_property_image', {
+            target_property_id: propertyId,
+            target_media_id: firstNewImage.id
+          });
+          if (primaryError) status.textContent = `Media uploaded, but the main image could not be set: ${primaryError.message}`;
+        }
+        uploadForm.reset();
+        if (!status.textContent.startsWith('Media uploaded, but')) status.textContent = 'Media uploaded successfully.';
+      } catch (error) {
+        let cleanupError = null;
+        if (!mediaRowsInserted && uploadedPaths.length) {
+          const { error: removeError } = await supabase.storage.from('property-images').remove(uploadedPaths);
+          cleanupError = removeError;
+        }
+        status.textContent = `${error.message || 'Unable to upload property media.'}${cleanupError ? ` Some uploaded files could not be cleaned up: ${cleanupError.message}` : ''}`;
+      } finally {
+        submitButton.disabled = false;
+      }
+      if (mediaRowsInserted) {
+        try {
+          await loadMedia();
+        } catch (error) {
+          status.textContent = `Media uploaded, but the gallery could not be refreshed: ${error.message}`;
+        }
+      }
+    });
+  }
+
   showPropertyGallery(property, initialMode = 'gallery') {
     document.getElementById('property-gallery-modal')?.remove();
     const media = (property.images || [])
@@ -3747,6 +4012,7 @@ class AlMahaApp {
           <strong class="property-gallery-price">${escapeHtml(property.currency || 'AED')} ${Number(property.price || 0).toLocaleString('en-US')}</strong>
           <p>${escapeHtml(property.location || 'United Arab Emirates')}</p>
           <div class="listing-features"><span>${Number(property.bedrooms || 0)} beds</span><span>${Number(property.bathrooms || 0)} baths</span><span>${Number(property.areaSqft || 0).toLocaleString('en-US')} sqft</span></div>
+          <div class="property-gallery-manage" hidden><button class="btn-outline" type="button" data-open-property-media>Manage photos &amp; videos</button></div>
           <div class="property-gallery-request"></div>
         </div>
       </section>
@@ -3756,6 +4022,26 @@ class AlMahaApp {
     const stage = overlay.querySelector('.property-gallery-stage');
     const thumbnails = overlay.querySelector('.property-gallery-thumbnails');
     const requestPanel = overlay.querySelector('.property-gallery-request');
+    const manageMediaButton = overlay.querySelector('[data-open-property-media]');
+    manageMediaButton.addEventListener('click', () => {
+      this.showPropertyMediaManager(property.id, property.title);
+    });
+    const user = store.getState().user;
+    if (user?.id && canRequest) {
+      supabase.rpc('can_manage_property_media', { target_property_id: property.id })
+        .then(({ data, error }) => {
+          if (error) {
+            console.error('Unable to check property media permissions:', error);
+            return;
+          }
+          if (data === true && document.body.contains(overlay)) {
+            overlay.querySelector('.property-gallery-manage').hidden = false;
+          }
+        })
+        .catch(error => {
+          console.error('Unable to check property media permissions:', error);
+        });
+    }
     const renderMedia = () => {
       const current = media[currentIndex];
       stage.innerHTML = current

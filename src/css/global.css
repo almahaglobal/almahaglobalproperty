@@ -261,6 +261,12 @@ button, input, select {
   font-size: 0.78rem;
 }
 
+.profile-property-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 .profile-whatsapp-row {
   display: flex;
   align-items: center;
@@ -328,6 +334,14 @@ button, input, select {
   .profile-page,
   .profile-content {
     padding: 20px;
+  }
+
+  .profile-property-row {
+    grid-template-columns: 1fr auto;
+  }
+
+  .profile-property-actions {
+    grid-column: 1 / -1;
   }
 
   .profile-header,

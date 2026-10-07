@@ -2,6 +2,7 @@ import { withSupabase } from 'npm:@supabase/server@1';
 
 const allowedOrigins = new Set([
   'https://www.almahaglobalproperty.com',
+  'https://almahaglobalproperty.com',
   'http://127.0.0.1:50758',
   'http://localhost:50758'
 ]);
