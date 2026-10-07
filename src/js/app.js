@@ -329,7 +329,7 @@ class AlMahaApp {
     this.adminActiveTab = ['accounts', 'properties', 'projects', 'messages'].includes(initialTab) ? initialTab : 'accounts';
     document.body.classList.remove('home-page');
     mainContainer.classList.remove('home-page');
-    mainContainer.innerHTML = '<section class="admin-dashboard"><header class="admin-dashboard-heading"><span class="auth-eyebrow">AL MAHA GLOBAL PROPERTY</span><h1>Admin dashboard</h1><p>Review new accounts, property evidence, listings, and project submissions.</p></header><p class="admin-action-status" id="admin-action-status" role="status"></p><div class="admin-dashboard-loading">Loading review queues...</div></section>';
+    mainContainer.innerHTML = '<section class="admin-dashboard"><header class="admin-dashboard-heading"><span class="auth-eyebrow">AL MAHA GLOBAL PROPERTY</span><h1>Admin dashboard</h1><p>Review new accounts, property documents and photos/videos, listings, and project submissions. Properties go public only after their verification documents and listing media are approved.</p></header><p class="admin-action-status" id="admin-action-status" role="status"></p><div class="admin-dashboard-loading">Loading review queues...</div></section>';
 
     const [accountsResult, propertiesResult, projectsResult, contactMessagesResult, propertyInquiriesResult] = await Promise.all([
       supabase
@@ -374,7 +374,12 @@ class AlMahaApp {
         ? supabase.from('property_verification_documents').select('id, property_id, document_type, storage_path, original_filename, mime_type, status, rejection_reason').in('property_id', propertyIds).order('created_at', { ascending: true })
         : Promise.resolve({ data: [], error: null }),
       propertyIds.length
-        ? supabase.from('property_media').select('property_id, url, media_type, is_primary').in('property_id', propertyIds)
+        ? supabase.from('property_media').select('id, property_id, url, media_type, is_primary, approval_status, rejection_reason').in('property_id', propertyIds)
+          .then(async result => {
+            if (!result.error) return result;
+            // Older databases without the approval columns still need to show the files.
+            return supabase.from('property_media').select('id, property_id, url, media_type, is_primary').in('property_id', propertyIds);
+          })
         : Promise.resolve({ data: [], error: null }),
       ownerIds.length
         ? supabase.from('users').select('id, first_name, last_name, email').in('id', ownerIds)
@@ -383,6 +388,7 @@ class AlMahaApp {
     const accountDocuments = accountDocumentsResult.data || [];
     const propertyDocuments = propertyDocumentsResult.data || [];
     const propertyMedia = propertyMediaResult.data || [];
+    if (propertyMediaResult.error) console.error('Admin property media load failed', propertyMediaResult.error);
     const owners = new Map((ownersResult.data || []).map(owner => [owner.id, owner]));
     const accountDocsByUser = new Map();
     const propertyDocsByProperty = new Map();
@@ -403,10 +409,12 @@ class AlMahaApp {
         supabase.storage.from(bucket).createSignedUrl(path, 600, { download: filename })
       ]);
       const { data, error } = previewResult;
-      if (error || !data?.signedUrl) return `<span class="admin-upload-unavailable">${escapeHtml(filename)} · Preview unavailable</span>`;
+      if (error || !data?.signedUrl) return `<span class="admin-upload-unavailable">${escapeHtml(filename)} · Preview unavailable${error?.message ? ` (${escapeHtml(error.message)})` : ''}</span>`;
       const signedUrl = escapeHtml(data.signedUrl);
       const preview = mimeType?.startsWith('image/')
         ? `<a class="admin-upload-preview" href="${signedUrl}" target="_blank" rel="noopener"><img src="${signedUrl}" alt="${escapeHtml(filename)}" loading="lazy"></a>`
+        : mimeType?.startsWith('video/')
+          ? `<video class="admin-upload-preview" src="${signedUrl}" controls preload="metadata"></video>`
         : '';
       const downloadLink = downloadResult.data?.signedUrl
         ? `<a href="${escapeHtml(downloadResult.data.signedUrl)}">Download</a>`
@@ -474,19 +482,26 @@ class AlMahaApp {
           ${document.status !== 'approved' ? `<div class="admin-review-actions"><button class="btn-primary" type="button" data-review-type="property" data-review-decision="approved" data-document-id="${escapeHtml(document.id)}">Approve upload</button><button class="btn-outline" type="button" data-review-type="property" data-review-decision="rejected" data-document-id="${escapeHtml(document.id)}">Reject</button></div>` : ''}
         </div>
       `));
-      const photos = await Promise.all((propertyMediaByProperty.get(property.id) || []).map(media => uploadMarkup(
-        'property-images',
-        media.url,
-        media.url.split('/').pop() || property.title,
-        media.media_type === 'video' ? 'video/mp4' : 'image/jpeg'
-      )));
+      const photos = await Promise.all((propertyMediaByProperty.get(property.id) || []).map(async media => `
+        <div class="admin-property-media-review">
+          ${await uploadMarkup(
+            'property-images',
+            String(media.url || '').replace(/^.*\/property-images\//, '').split('?')[0],
+            String(media.url || '').split('/').pop() || property.title,
+            media.media_type === 'video' ? 'video/mp4' : 'image/jpeg'
+          )}
+          <span class="admin-status ${media.approval_status === 'rejected' ? 'is-rejected' : ''}">${escapeHtml(media.approval_status?.replaceAll('_', ' ') || 'pending review')}</span>
+          ${media.rejection_reason ? `<p class="admin-rejection-reason">${escapeHtml(media.rejection_reason)}</p>` : ''}
+          ${media.approval_status !== 'approved' ? `<div class="admin-review-actions"><button class="btn-primary" type="button" data-review-type="property-media" data-review-decision="approved" data-media-id="${escapeHtml(media.id)}">Approve ${media.media_type}</button><button class="btn-outline" type="button" data-review-type="property-media" data-review-decision="rejected" data-media-id="${escapeHtml(media.id)}">Reject ${media.media_type}</button></div>` : ''}
+        </div>
+      `));
       const price = `${escapeHtml(property.currency || 'AED')} ${Number(property.price || 0).toLocaleString('en-US')}`;
       const location = [property.city, property.country_code].filter(Boolean).join(', ');
       return `<article class="admin-review-card">
         <div class="admin-review-card-heading"><div><span class="admin-record-type">Property listing · ${escapeHtml(property.reference_number)}</span><h2>${escapeHtml(property.title)}</h2><p>Submitted by ${escapeHtml(ownerName)} · ${escapeHtml(property.status.replaceAll('_', ' '))}</p></div><strong class="admin-project-price">${price}</strong></div>
         <p class="admin-record-description">${escapeHtml(property.description || 'No description provided.')}</p>
         <div class="admin-record-facts"><span>${escapeHtml(property.property_type || 'Property')}</span><span>${escapeHtml(location || 'Location not provided')}</span><span>${Number(property.bedrooms || 0)} beds</span><span>${Number(property.bathrooms || 0)} baths</span><span>${Number(property.area_sqft || 0).toLocaleString('en-US')} sqft</span></div>
-        <div class="admin-upload-gallery">${photos.join('') || '<span class="admin-empty-inline">No property photos available.</span>'}</div>
+        <div class="admin-upload-gallery">${photos.join('') || (propertyMediaResult.error ? `<span class="admin-empty-inline">Could not load photos: ${escapeHtml(propertyMediaResult.error.message)}</span>` : '<span class="admin-empty-inline">No property photos available.</span>')}</div>
         <div class="admin-review-actions"><button class="btn-outline" type="button" data-manage-property-media="${escapeHtml(property.id)}" data-property-title="${escapeHtml(property.title)}">Manage property photos &amp; videos</button></div>
         <div class="admin-upload-list">${evidence.join('') || '<p class="admin-empty-inline">No verification uploads are attached to this listing.</p>'}</div>
       </article>`;
@@ -693,6 +708,12 @@ class AlMahaApp {
             published_at: decision === 'approved' ? new Date().toISOString() : null,
             updated_at: new Date().toISOString()
           }).eq('id', button.dataset.projectId).eq('approval_status', 'pending_review').select('id').maybeSingle()
+          : button.dataset.reviewType === 'property-media'
+            ? await supabase.rpc('review_property_media', {
+              target_media_id: button.dataset.mediaId,
+              decision,
+              reason
+            })
           : button.dataset.reviewType === 'property'
             ? await supabase.rpc('review_property_verification_document', {
               target_document_id: button.dataset.documentId,
@@ -2679,7 +2700,7 @@ class AlMahaApp {
               </div>
               <div class="owner-photo-upload-box">
                 <input name="propertyPhotos" type="file" accept=".jpg,.jpeg,.png,.webp" multiple>
-                <small>Minimum 5 photos · Recommended 10–20 photos</small>
+                <small>Minimum 5 photos · Recommended 10–20 photos. An administrator must approve the listing photos and verification documents before your property goes public.</small>
               </div>
               <div class="owner-photo-meta">
                 <div class="owner-photo-categories">
@@ -3138,9 +3159,10 @@ class AlMahaApp {
           .replace(/(^-|-$)/g, '') || 'property';
         const reference = `AMP-${String(Date.now()).slice(-8)}`;
 
-        const propertyApprovalStatus = activeUser.verificationStatus === 'approved' ? 'approved' : 'pending_verification';
+        const propertyApprovalStatus = 'under_review';
         const propertyPayload = {
           id: propertyId,
+          owner_id: activeUser.id,
           reference_number: reference,
           title: values.listingTitle || `${values.propertyType || 'Property'} in ${values.city || 'Dubai'}`,
           slug: `${slugBase}-${Date.now()}`,
@@ -3158,6 +3180,7 @@ class AlMahaApp {
           furnishing: values.furnishing || 'Unspecified',
           completion_status: values.propertyStatus || 'Ready',
           ownership: values.ownershipType || 'Individual',
+          city: values.emirate || values.city || null,
           latitude: Number(values.latitude),
           longitude: Number(values.longitude),
           is_verified: propertyApprovalStatus === 'approved',
@@ -3210,7 +3233,7 @@ class AlMahaApp {
           this.initHeader();
         }
 
-        statusElement.textContent = `Your property registration was submitted for verification. Reference: ${reference}. An administrator will review your documents and listing.`;
+        statusElement.textContent = `Your property registration was submitted for review. Reference: ${reference}. An administrator must approve your verification documents and listing photos/videos before the property goes public.`;
         statusElement.classList.add('success');
         submitButton.textContent = 'Submitted';
         localStorage.removeItem('al_maha_owner_draft');
@@ -3311,7 +3334,7 @@ class AlMahaApp {
             <p class="auth-status" id="sell-verification-status" role="status"></p>
           </section>
           <section class="sell-form-section">
-            <div class="sell-section-heading"><div><h2>Property Photos</h2><p>Upload at least 5 images. JPG, JPEG, PNG, or WebP up to 10 MB each. Recommended: 10-20 photos.</p></div><strong id="sell-photo-count">0 / 5 minimum</strong></div>
+            <div class="sell-section-heading"><div><h2>Property Photos</h2><p>Upload at least 5 images. JPG, JPEG, PNG, or WebP up to 10 MB each. Recommended: 10-20 photos. An administrator must approve the listing photos and verification documents before your property goes public.</p></div><strong id="sell-photo-count">0 / 5 minimum</strong></div>
             <label class="photo-dropzone" id="photo-dropzone" for="sell-photo-input"><input id="sell-photo-input" type="file" accept="image/jpeg,image/png,image/webp" multiple><span>Drop photos here or <strong>browse files</strong></span></label>
             <div class="sell-photo-gallery" id="sell-photo-gallery" aria-live="polite"></div>
             <p class="auth-status" id="sell-photo-status" role="status"></p>
@@ -3648,7 +3671,7 @@ class AlMahaApp {
         <div class="property-search-heading submission-confirmation">
           <span class="auth-eyebrow">PROPERTY SUBMITTED</span>
           <h1>Your property is under review</h1>
-          <p>${escapeHtml(property.title)} has been submitted. It will appear on the homepage after an administrator approves the property verification documents.</p>
+          <p>${escapeHtml(property.title)} has been submitted. The property and its photos/videos will go public after an administrator approves the verification documents and all listing media.</p>
           <div class="submission-summary">
             <div><span>Location</span><strong>${property.city}, ${countryNames[property.country] || property.country}</strong></div>
             <div><span>Price</span><strong>${property.currency} ${Number(property.price).toLocaleString()}</strong></div>
@@ -3788,7 +3811,7 @@ class AlMahaApp {
     const loadMedia = async () => {
       const { data: rows, error } = await supabase
         .from('property_media')
-        .select('id, url, media_type, is_primary')
+        .select('id, url, media_type, is_primary, approval_status, rejection_reason')
         .eq('property_id', propertyId)
         .order('is_primary', { ascending: false })
         .order('url', { ascending: true });
@@ -3809,6 +3832,8 @@ class AlMahaApp {
             ? `<video src="${escapeHtml(item.signedUrl)}" controls preload="metadata"></video>`
             : `<img src="${escapeHtml(item.signedUrl)}" alt="${escapeHtml(propertyTitle)}" loading="lazy">`}
           <div><strong>${item.media_type === 'video' ? 'Video' : 'Image'}${item.is_primary ? ' · Main image' : ''}</strong>
+            <span>${escapeHtml(item.approval_status?.replaceAll('_', ' ') || 'pending review')}${item.approval_status === 'pending_review' ? ' · Waiting for admin approval' : ''}</span>
+            ${item.rejection_reason ? `<p>${escapeHtml(item.rejection_reason)}</p>` : ''}
             <div class="property-media-manager-actions">
               ${item.media_type === 'image' && !item.is_primary ? `<button class="btn-outline" type="button" data-set-primary-media="${escapeHtml(item.id)}">Set as main image</button>` : ''}
               <button class="btn-outline" type="button" data-delete-property-media="${escapeHtml(item.id)}" data-media-path="${escapeHtml(item.url)}" data-media-type="${escapeHtml(item.media_type)}" data-is-primary="${item.is_primary}">Delete</button>

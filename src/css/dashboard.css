@@ -408,6 +408,23 @@
   object-fit: cover;
 }
 
+video.admin-upload-preview {
+  display: block;
+  width: 100%;
+  height: 100%;
+  background: #111d23;
+  object-fit: contain;
+}
+
+.admin-property-media-review {
+  display: grid;
+  min-width: min(100%, 280px);
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+}
+
 .admin-upload-list {
   display: grid;
   gap: 4px;
