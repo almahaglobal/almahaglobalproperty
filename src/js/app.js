@@ -4066,7 +4066,7 @@ class AlMahaApp {
       .map(item => ({ ...item, url: safeHttpUrl(item.url) }));
     if (!media.length && safeHttpUrl(property.image)) media.push({ url: safeHttpUrl(property.image), type: 'image', isPrimary: true });
     let currentIndex = Math.max(0, media.findIndex(item => item.isPrimary));
-    let mode = initialMode;
+    let mode = initialMode === 'contact' ? 'gallery' : initialMode;
     const canRequest = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(property.id || '');
     const overlay = document.createElement('div');
     overlay.id = 'property-gallery-modal';
@@ -4143,10 +4143,38 @@ class AlMahaApp {
         requestPanel.innerHTML = `
           <h3>Interested in this property?</h3>
           <div class="property-gallery-actions">
-            <button class="btn-outline" type="button" data-request-type="contact">Contact dealer</button>
+            <button class="btn-outline" type="button" data-request-type="contact">Message dealer</button>
+            <button class="btn-whatsapp btn-outline" type="button" data-whatsapp-contact>Chat on WhatsApp</button>
             <button class="btn-primary" type="button" data-request-type="viewing">Book a viewing</button>
           </div>
+          <p class="property-gallery-request-status" data-whatsapp-status role="status"></p>
         `;
+        requestPanel.querySelector('[data-whatsapp-contact]').addEventListener('click', async event => {
+          const button = event.currentTarget;
+          const whatsappStatus = requestPanel.querySelector('[data-whatsapp-status]');
+          if (!canRequest) {
+            whatsappStatus.textContent = 'WhatsApp is available for published listings only.';
+            return;
+          }
+          button.disabled = true;
+          whatsappStatus.textContent = 'Opening WhatsApp...';
+          // Open the tab synchronously so popup blockers allow it, then set the URL after the lookup.
+          const chatWindow = window.open('', '_blank');
+          try {
+            const { data, error } = await supabase.rpc('get_property_whatsapp', { target_property_id: property.id });
+            if (error) throw error;
+            if (!data) throw new Error('The dealer has not added a WhatsApp number. Please send a message instead.');
+            const text = encodeURIComponent(`Hello, I'm interested in "${property.title}" (ref ${property.reference || property.reference_number || property.id}).`);
+            const url = `https://wa.me/${data}?text=${text}`;
+            if (chatWindow) { chatWindow.opener = null; chatWindow.location.href = url; } else { window.location.href = url; }
+            whatsappStatus.textContent = '';
+          } catch (error) {
+            chatWindow?.close();
+            whatsappStatus.textContent = error.message || 'Unable to open WhatsApp.';
+          } finally {
+            button.disabled = false;
+          }
+        });
         requestPanel.querySelectorAll('[data-request-type]').forEach(button => button.addEventListener('click', () => {
           mode = button.dataset.requestType;
           renderRequestPanel();
