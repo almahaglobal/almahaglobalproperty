@@ -3647,8 +3647,8 @@ class AlMahaApp {
       <section class="property-search-page sell-page">
         <div class="property-search-heading submission-confirmation">
           <span class="auth-eyebrow">PROPERTY SUBMITTED</span>
-          <h1>Your property is ready</h1>
-          <p>${property.title} has been saved with the details below.</p>
+          <h1>Your property is under review</h1>
+          <p>${escapeHtml(property.title)} has been submitted. It will appear on the homepage after an administrator approves the property verification documents.</p>
           <div class="submission-summary">
             <div><span>Location</span><strong>${property.city}, ${countryNames[property.country] || property.country}</strong></div>
             <div><span>Price</span><strong>${property.currency} ${Number(property.price).toLocaleString()}</strong></div>
