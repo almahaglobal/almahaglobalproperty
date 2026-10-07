@@ -4227,7 +4227,7 @@ class AlMahaApp {
                   <div class="listing-price">${this.formatPrice(p.price, state.currency)}</div>
                   <div class="listing-features"><span>${p.bedrooms} ${t.beds}</span><span>${p.bathrooms} ${t.baths}</span><span>${p.areaSqft} ${t.sqft}</span></div>
                   <h3 class="listing-title">${p.title}</h3>
-                  <div class="listing-location">${p.location}</div>
+                  <div class="listing-location">${escapeHtml(p.location)}</div>
                   <div class="listing-actions-footer">${this.getPropertyCoordinates(p) ? `<button class="btn-outline" type="button" data-property-map data-property-id="${escapeHtml(p.id)}">View map</button>` : ''}<button class="btn-outline" type="button" data-property-action="contact" data-property-id="${escapeHtml(p.id)}">Contact dealer</button><button class="btn-primary" type="button" data-property-action="viewing" data-property-id="${escapeHtml(p.id)}">Book a viewing</button></div>
                 </div>
               </div>
@@ -4457,7 +4457,7 @@ class AlMahaApp {
                   <span>${p.areaSqft} ${t.sqft}</span>
                 </div>
                 <h3 class="listing-title">${p.title}</h3>
-                <div class="listing-location">${p.location}</div>
+                <div class="listing-location">${escapeHtml(p.location)}</div>
                 <div class="listing-actions-footer">
                   ${this.getPropertyCoordinates(p) ? `<button class="btn-outline" type="button" data-property-map data-property-id="${escapeHtml(p.id)}">View map</button>` : ''}
                   <button class="btn-outline" type="button" data-property-action="gallery" data-property-id="${escapeHtml(p.id)}">View photos${p.images?.length > 1 ? ` (${p.images.length})` : ''}</button>

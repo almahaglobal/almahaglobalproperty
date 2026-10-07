@@ -1,6 +1,11 @@
 import { supabase } from './supabase.js';
 
 const API_BASE_URL = '/api';
+const PROPERTY_COUNTRY_NAMES = {
+  AE: 'United Arab Emirates', SA: 'Saudi Arabia', QA: 'Qatar', KW: 'Kuwait', BH: 'Bahrain', OM: 'Oman',
+  JO: 'Jordan', EG: 'Egypt', LB: 'Lebanon', MA: 'Morocco', TN: 'Tunisia', GB: 'United Kingdom',
+  FR: 'France', ES: 'Spain', DE: 'Germany', CN: 'China', RU: 'Russia', US: 'United States'
+};
 
 const demoProperties = [
   {
@@ -92,7 +97,7 @@ export const ApiService = {
     try {
       let query = supabase
         .from('properties')
-        .select('id, reference_number, title, price, currency, purpose, property_type, bedrooms, bathrooms, area_sqft, latitude, longitude, status, is_verified, description, agent_id, property_media(url, media_type, is_primary)')
+        .select('id, reference_number, title, price, currency, purpose, property_type, bedrooms, bathrooms, area_sqft, city, country_code, latitude, longitude, status, is_verified, description, agent_id, property_media(url, media_type, is_primary)')
         .in('status', ['available', 'approved', 'verified'])
         .order('created_at', { ascending: false });
 
@@ -115,6 +120,8 @@ export const ApiService = {
           }));
           const images = media.filter(Boolean);
           const coverImage = images.find(item => item.isPrimary) || images[0];
+          const city = property.city?.trim();
+          const country = PROPERTY_COUNTRY_NAMES[property.country_code] || property.country_code;
           return ({
           id: property.id,
           referenceNumber: property.reference_number,
@@ -126,7 +133,7 @@ export const ApiService = {
           bedrooms: Number(property.bedrooms || 0),
           bathrooms: Number(property.bathrooms || 0),
           areaSqft: Number(property.area_sqft || 0),
-          location: 'Dubai, United Arab Emirates',
+          location: [city, country].filter(Boolean).join(', ') || 'Location not provided',
           latitude: property.latitude,
           longitude: property.longitude,
           developer: 'Al Maha Global Property',
