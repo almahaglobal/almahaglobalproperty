@@ -725,8 +725,14 @@ class AlMahaApp {
         const reason = decision === 'rejected' ? window.prompt('Reason for rejection:') : null;
         if (decision === 'rejected' && !reason) return;
 
+        const originalLabel = button.textContent;
+        const status = document.getElementById('admin-action-status');
         button.disabled = true;
-        const result = button.dataset.reviewType === 'project'
+        button.textContent = decision === 'approved' ? 'Approving...' : 'Rejecting...';
+        if (status) status.textContent = '';
+        let result;
+        try {
+          result = button.dataset.reviewType === 'project'
           ? await supabase.from('projects').update({
             approval_status: decision,
             is_verified: decision === 'approved',
@@ -756,15 +762,31 @@ class AlMahaApp {
               decision,
               reason
             });
+        } catch (error) {
+          result = { error };
+        }
 
         if (result.error || (button.dataset.reviewType === 'project' && !result.data)) {
-          const status = document.getElementById('admin-action-status');
-          if (status) status.textContent = result.error?.message || 'This project was already reviewed or is no longer available.';
+          const message = result.error?.message || 'This project was already reviewed or is no longer available.';
+          console.error('Admin review failed', result.error);
+          if (status) status.textContent = message;
+          const actions = button.closest('.admin-review-actions') || button.parentElement;
+          let inline = actions.parentElement.querySelector(':scope > .admin-query-error');
+          if (!inline) {
+            inline = document.createElement('p');
+            inline.className = 'admin-query-error';
+            inline.setAttribute('role', 'alert');
+            actions.insertAdjacentElement('afterend', inline);
+          }
+          inline.textContent = message;
           button.disabled = false;
+          button.textContent = originalLabel;
           return;
         }
 
+        const scrollY = window.scrollY;
         await this.renderAdminVerificationPage(this.adminActiveTab);
+        window.scrollTo(0, scrollY);
       });
     });
   }

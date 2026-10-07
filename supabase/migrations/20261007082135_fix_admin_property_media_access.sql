@@ -20,3 +20,5 @@ DROP POLICY IF EXISTS property_verification_documents_admin_select ON public.pro
 CREATE POLICY property_verification_documents_admin_select ON public.property_verification_documents
   FOR SELECT TO authenticated
   USING (public.is_admin());
+
+NOTIFY pgrst, 'reload schema';
