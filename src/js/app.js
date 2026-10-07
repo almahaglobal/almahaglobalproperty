@@ -403,16 +403,41 @@ class AlMahaApp {
       propertyMediaByProperty.set(media.property_id, [...(propertyMediaByProperty.get(media.property_id) || []), media]);
     }
 
+    // Signed URLs are cached per bucket/path/mode and reused until shortly before expiry.
+    const SIGNED_URL_TTL_SECONDS = 3600;
+    this.signedUrlCache = this.signedUrlCache || new Map();
+    const signedUrlFor = async (bucket, path, downloadName) => {
+      const key = `${bucket}|${path}|${downloadName || ''}`;
+      const cached = this.signedUrlCache.get(key);
+      if (cached && cached.expiresAt > Date.now() + 60000) return cached.result;
+      const storage = supabase.storage.from(bucket);
+      const result = await (downloadName
+        ? storage.createSignedUrl(path, SIGNED_URL_TTL_SECONDS, { download: downloadName })
+        : storage.createSignedUrl(path, SIGNED_URL_TTL_SECONDS));
+      if (!result.error && result.data?.signedUrl) {
+        this.signedUrlCache.set(key, { result, expiresAt: Date.now() + SIGNED_URL_TTL_SECONDS * 1000 });
+      }
+      return result;
+    };
+
     const uploadMarkup = async (bucket, path, filename, mimeType) => {
+      if (!path) return `<span class="admin-upload-unavailable">${escapeHtml(filename || 'File')} · File path missing</span>`;
+      const { data: sessionData } = await supabase.auth.getSession();
+      if (!sessionData?.session) {
+        return '<span class="admin-upload-unavailable">Admin session expired. Please sign in again to view files.</span>';
+      }
       const [previewResult, downloadResult] = await Promise.all([
-        supabase.storage.from(bucket).createSignedUrl(path, 600),
-        supabase.storage.from(bucket).createSignedUrl(path, 600, { download: filename })
+        signedUrlFor(bucket, path),
+        signedUrlFor(bucket, path, filename)
       ]);
       const { data, error } = previewResult;
-      if (error || !data?.signedUrl) return `<span class="admin-upload-unavailable">${escapeHtml(filename)} · Preview unavailable${error?.message ? ` (${escapeHtml(error.message)})` : ''}</span>`;
+      if (error || !data?.signedUrl) {
+        console.error(`Signed URL failed for ${bucket}/${path}`, error);
+        return `<span class="admin-upload-unavailable">${escapeHtml(filename)} · Preview unavailable${error?.message ? ` (${escapeHtml(error.message)})` : ''}</span>`;
+      }
       const signedUrl = escapeHtml(data.signedUrl);
       const preview = mimeType?.startsWith('image/')
-        ? `<a class="admin-upload-preview" href="${signedUrl}" target="_blank" rel="noopener"><img src="${signedUrl}" alt="${escapeHtml(filename)}" loading="lazy"></a>`
+        ? `<a class="admin-upload-preview" href="${signedUrl}" target="_blank" rel="noopener"><img src="${signedUrl}" alt="${escapeHtml(filename)}" loading="lazy" onerror="this.replaceWith(Object.assign(document.createElement('span'),{className:'admin-upload-unavailable',textContent:'Image failed to load'}))"></a>`
         : mimeType?.startsWith('video/')
           ? `<video class="admin-upload-preview" src="${signedUrl}" controls preload="metadata"></video>`
         : '';
