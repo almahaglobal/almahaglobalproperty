@@ -53,10 +53,11 @@ const handler = withSupabase({ auth: 'user' }, async (request, context) => {
   const refreshToken = Deno.env.get('GMAIL_REFRESH_TOKEN');
   const configuredSender = Deno.env.get('GMAIL_SENDER_EMAIL')?.toLowerCase();
   const useGmail = !!(clientId && clientSecret && refreshToken && configuredSender === senderAddress);
-  const smtpHost = Deno.env.get('SMTP_HOST');
-  const smtpUser = Deno.env.get('SMTP_USER');
-  const smtpPassword = Deno.env.get('SMTP_PASSWORD');
-  const smtpPort = Number(Deno.env.get('SMTP_PORT') || 587);
+  const smtpHost = Deno.env.get('SMTP_HOST')?.trim();
+  const smtpUser = Deno.env.get('SMTP_USER')?.trim();
+  // Gmail app passwords are often pasted with spaces; they are not part of the password.
+  const smtpPassword = Deno.env.get('SMTP_PASSWORD')?.trim().replace(/\s+/g, '');
+  const smtpPort = Number(Deno.env.get('SMTP_PORT')?.trim() || 587);
   if (!useGmail && !(smtpHost && smtpUser && smtpPassword)) {
     return Response.json({ error: 'Email sending is not configured (set SMTP_* or GMAIL_* secrets).' }, { status: 503 });
   }
@@ -98,8 +99,16 @@ const handler = withSupabase({ auth: 'user' }, async (request, context) => {
         text: replyBody
       });
     } catch (error) {
-      console.error('SMTP send failed:', error instanceof Error ? error.message : 'Unknown error');
-      return Response.json({ error: 'SMTP could not send the reply. Check the SMTP settings.' }, { status: 502 });
+      const smtpError = error as { code?: string; responseCode?: number; message?: string };
+      console.error('SMTP send failed:', smtpError.code, smtpError.responseCode, smtpError.message);
+      const hint = smtpError.code === 'EAUTH' || smtpError.responseCode === 535
+        ? 'login rejected - check SMTP_USER and SMTP_PASSWORD (Gmail needs an App Password)'
+        : smtpError.code === 'ESOCKET' || smtpError.code === 'ECONNECTION' || smtpError.code === 'ETIMEDOUT' || smtpError.code === 'EDNS'
+          ? 'could not connect - check SMTP_HOST and SMTP_PORT (587 or 465)'
+          : smtpError.code === 'EENVELOPE' || (smtpError.responseCode && smtpError.responseCode >= 550)
+            ? 'the server refused the sender or recipient address'
+            : 'unexpected SMTP error';
+      return Response.json({ error: `SMTP could not send the reply: ${hint}${smtpError.code ? ` (${smtpError.code})` : ''}.` }, { status: 502 });
     }
   } else {
   const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
