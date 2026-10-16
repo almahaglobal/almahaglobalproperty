@@ -1,5 +1,5 @@
 import { store } from './store.js';
-import { ApiService } from './api.js';
+import { ApiService } from './api.js?v=20261016';
 import { supabase } from './supabase.js';
 
 const KYC_QUEUE_DB = 'al-maha-kyc-queue';
